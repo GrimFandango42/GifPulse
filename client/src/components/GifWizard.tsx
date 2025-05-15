@@ -7,6 +7,7 @@ import GifThumbnail from "@/components/GifThumbnail";
 import { queryClient } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useGifCreator } from "@/hooks/use-gif-creator";
 
 type AiProvider = "auto" | "openai" | "google" | "anthropic";
 type ScreenState = "search" | "generating" | "result" | "error";

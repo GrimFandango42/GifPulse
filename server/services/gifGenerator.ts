@@ -1,6 +1,7 @@
 import * as openai from "./openai";
 import * as google from "./google";
 import * as anthropic from "./anthropic";
+import { createGifFromImages } from "./gifCreator";
 
 // Type for AI provider
 type Provider = "auto" | "openai" | "google" | "anthropic";
@@ -18,57 +19,103 @@ export async function generateGif(
   gifUrl: string;
   thumbnailUrl: string;
   variations: string[];
+  animationFrames?: string[]; // Added for client-side animation
 }> {
   try {
     console.log(`Generating GIF with prompt: "${prompt}" using provider: ${provider}`);
     
-    let gifUrl: string;
-    let variations: string[] = [];
-    
     // Choose the provider based on the input or auto-select
     if (provider === "auto") {
-      // In a real implementation, this would intelligently select the best provider
-      // For this demo, we'll randomly select a provider
-      const providers = ["openai", "google", "anthropic"];
-      provider = providers[Math.floor(Math.random() * providers.length)] as Provider;
+      // For now, we'll prefer OpenAI as it has the best image quality
+      // In a production app, we could have logic to select the best provider based on the prompt
+      provider = "openai";
       console.log(`Auto-selected provider: ${provider}`);
     }
     
-    // Generate the GIF using the selected provider
+    // Step 1: Generate animation frames based on the prompt
+    let frameUrls: string[] = [];
+    let variations: string[] = [];
+    
+    // Generate frames using the selected provider
     switch (provider) {
       case "openai":
-        gifUrl = await openai.generateImage(prompt);
-        variations = await openai.generateImageVariations(prompt, 3);
+        try {
+          // Try to generate proper animation frames
+          frameUrls = await openai.generateAnimationFrames(prompt, 5);
+          
+          // Get variations as well
+          variations = await openai.generateImageVariations(prompt, 3);
+        } catch (error) {
+          console.error("Error generating animation frames:", error);
+          
+          // Fallback: Just get a single image and use it as the GIF
+          const singleImage = await openai.generateImage(prompt);
+          frameUrls = [singleImage];
+          
+          // Try to get variations
+          try {
+            variations = await openai.generateImageVariations(prompt, 3);
+          } catch (variationError) {
+            console.error("Error generating variations:", variationError);
+            variations = [singleImage];
+          }
+        }
         break;
+        
       case "google":
-        gifUrl = await google.generateImage(prompt);
+        // Google doesn't support animation frames yet, so we'll just use their static image
+        const googleImage = await google.generateImage(prompt);
+        frameUrls = [googleImage];
         variations = await google.generateImageVariations(prompt, 3);
         break;
+        
       case "anthropic":
-        gifUrl = await anthropic.generateImage(prompt);
+        // Anthropic doesn't support animation frames yet, so we'll just use their static image
+        const anthropicImage = await anthropic.generateImage(prompt);
+        frameUrls = [anthropicImage];
         variations = await anthropic.generateImageVariations(prompt, 3);
         break;
+        
       default:
         throw new Error(`Unknown provider: ${provider}`);
     }
     
-    // In a real implementation, we would:
-    // 1. Generate multiple images based on the prompt
-    // 2. Convert images to frames
-    // 3. Create a GIF from the frames
-    // 4. Generate a thumbnail from the GIF
-    // 5. Upload the GIF and thumbnail to storage
+    // Step 2: Create animated GIF if we have multiple frames
+    let gifUrl: string;
     
-    // For this demo, we'll use the same URL for the thumbnail
-    // In production, this would be a separate, optimized thumbnail
-    const thumbnailUrl = gifUrl;
+    if (frameUrls.length > 1) {
+      // Create an actual animated GIF from the frames
+      try {
+        gifUrl = await createGifFromImages(frameUrls, {
+          width: 512,
+          height: 512,
+          delay: 200, // 200ms between frames (5 FPS)
+          quality: 10,
+          repeat: 0 // Loop forever
+        });
+        console.log("Successfully created animated GIF from frames");
+      } catch (gifError) {
+        console.error("Error creating animated GIF:", gifError);
+        // Fallback to just using the first frame
+        gifUrl = frameUrls[0];
+      }
+    } else if (frameUrls.length === 1) {
+      // Just use the single frame
+      gifUrl = frameUrls[0];
+    } else {
+      throw new Error("No images were generated for the GIF");
+    }
+    
+    // Use the first frame as the thumbnail
+    const thumbnailUrl = frameUrls[0];
     
     console.log(`Generated GIF for prompt: "${prompt}"`);
     
     return {
       gifUrl,
       thumbnailUrl,
-      variations
+      variations,
+      animationFrames: frameUrls.length > 1 ? frameUrls : undefined
     };
   } catch (error) {
     console.error("Error generating GIF:", error);

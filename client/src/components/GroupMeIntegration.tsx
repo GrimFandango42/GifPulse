@@ -7,12 +7,23 @@ interface GroupMeIntegrationProps {
   selectedGif: string | null;
 }
 
+interface ChatMessage {
+  id: number;
+  sender: string;
+  text?: string;
+  time: string;
+  isCurrentUser: boolean;
+  gif?: string | null;
+  initial?: string;
+  color?: string;
+}
+
 export default function GroupMeIntegration({ 
   onGifButtonClick, 
   selectedGif 
 }: GroupMeIntegrationProps) {
   const [message, setMessage] = useState("");
-  const [chatMessages, setChatMessages] = useState([
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: 1,
       sender: "John",

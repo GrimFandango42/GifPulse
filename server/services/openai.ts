@@ -10,7 +10,7 @@ const openai = new OpenAI({
 const giphy = GiphyApi();
 
 /**
- * Generate an image using OpenAI DALL-E
+ * Generate a single image using OpenAI DALL-E
  * @param prompt The text prompt to generate an image from
  * @returns URL of the generated image
  */
@@ -62,6 +62,94 @@ export async function generateImage(prompt: string): Promise<string> {
   } catch (error) {
     console.error("Error generating image with OpenAI DALL-E:", error);
     throw new Error(`OpenAI DALL-E image generation failed: ${error}`);
+  }
+}
+
+/**
+ * Generate multiple sequential images for animation frames
+ * @param basePrompt The base prompt to create animation from
+ * @param frameCount Number of frames to generate
+ * @returns Array of image URLs for animation frames
+ */
+export async function generateAnimationFrames(
+  basePrompt: string,
+  frameCount: number = 5
+): Promise<string[]> {
+  try {
+    console.log(`Generating ${frameCount} animation frames with OpenAI DALL-E for: ${basePrompt}`);
+    
+    // Generate animation-specific prompts
+    const animationPrompts = [];
+    
+    // Define motion descriptors for different frames
+    const motionDescriptors = [
+      "starting position of", 
+      "beginning movement of",
+      "midway through the movement of",
+      "continuing motion of",
+      "final position of"
+    ];
+    
+    // Create frame-specific prompts
+    for (let i = 0; i < frameCount; i++) {
+      const frameIndex = Math.min(i, motionDescriptors.length - 1);
+      const descriptor = motionDescriptors[frameIndex];
+      
+      // Create a frame-specific prompt with motion context
+      animationPrompts.push(
+        `Frame ${i+1}/${frameCount}: ${descriptor} ${basePrompt}. Create a coherent animation frame that shows ${descriptor} the action.`
+      );
+    }
+    
+    // Generate all frames in parallel
+    const framePromises = animationPrompts.map(async (framePrompt) => {
+      try {
+        // Generate each frame
+        const response = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: framePrompt,
+          n: 1,
+          size: "1024x1024",
+          quality: "standard",
+          style: "vivid",
+        });
+        
+        if (response.data && response.data.length > 0 && response.data[0].url) {
+          return response.data[0].url;
+        }
+        
+        throw new Error('OpenAI API returned an empty response for frame');
+      } catch (frameError) {
+        console.error("Error generating animation frame:", frameError);
+        
+        // If a frame fails, return a placeholder or fallback
+        // For consistency in animation, we'll use Giphy as fallback
+        try {
+          const giphyResponse = await giphy.search({
+            q: basePrompt,
+            limit: 1,
+            rating: 'g'
+          });
+          
+          if (giphyResponse.data && giphyResponse.data.length > 0) {
+            return giphyResponse.data[0].images.original.url;
+          }
+        } catch (giphyError) {
+          console.error("Giphy fallback also failed:", giphyError);
+        }
+        
+        throw frameError;
+      }
+    });
+    
+    // Wait for all frames to be generated
+    const frameUrls = await Promise.all(framePromises);
+    console.log(`Successfully generated ${frameUrls.length} animation frames`);
+    
+    return frameUrls;
+  } catch (error) {
+    console.error("Error generating animation frames:", error);
+    throw new Error(`Animation frame generation failed: ${error}`);
   }
 }
 
