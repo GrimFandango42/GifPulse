@@ -36,12 +36,18 @@ export default function Home() {
       description: "Your custom GIF has been added to the message",
     });
   };
+  
+  // Clear selected GIF after sending
+  const handleGifSent = () => {
+    setSelectedGif(null);
+  };
 
   return (
     <div className="relative min-h-screen">
       <GroupMeIntegration 
         onGifButtonClick={handleGifButtonClick} 
         selectedGif={selectedGif}
+        onGifSent={handleGifSent}
       />
       
       {isGifWizardOpen && (

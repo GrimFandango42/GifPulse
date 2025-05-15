@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 interface GroupMeIntegrationProps {
   onGifButtonClick: () => void;
   selectedGif: string | null;
+  onGifSent?: () => void;
 }
 
 interface ChatMessage {
@@ -20,7 +21,8 @@ interface ChatMessage {
 
 export default function GroupMeIntegration({ 
   onGifButtonClick, 
-  selectedGif 
+  selectedGif,
+  onGifSent
 }: GroupMeIntegrationProps) {
   const [message, setMessage] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -56,7 +58,7 @@ export default function GroupMeIntegration({
       const newMessage = {
         id: Date.now(),
         sender: "You",
-        text: message,
+        text: message.trim() ? message : undefined,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isCurrentUser: true,
         gif: selectedGif
@@ -64,6 +66,11 @@ export default function GroupMeIntegration({
       
       setChatMessages([...chatMessages, newMessage]);
       setMessage("");
+      
+      // Notify parent that the GIF was sent
+      if (selectedGif && onGifSent) {
+        onGifSent();
+      }
     }
   };
 
