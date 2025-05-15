@@ -60,12 +60,18 @@ export default function GifWizard({
         setStatusMessage("Creating animated GIF...");
         
         try {
+          // Log animation frames for debugging
+          console.log(`Creating animated GIF from ${data.animationFrames.length} frames`);
+          data.animationFrames.forEach((url, index) => {
+            console.log(`Frame ${index + 1}: ${url.substring(0, 50)}...`);
+          });
+          
           // Create an animated GIF on the client side
           const gifDataUrl = await createGif(data.animationFrames, {
-            width: 500,
-            height: 500,
-            delay: 200, // 200ms between frames (5 FPS)
-            quality: 10,
+            width: 400,
+            height: 400,
+            delay: 300, // 300ms between frames (3.3 FPS) for better visibility of changes
+            quality: 5,  // Lower for better performance
             repeat: 0 // Loop forever
           });
           
@@ -367,11 +373,11 @@ export default function GifWizard({
         {screenState === "result" && currentGeneratedGif && (
           <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
             <div className="w-full max-w-md">
-              <div className="aspect-video bg-neutral-light rounded-lg overflow-hidden mb-4 relative">
+              <div className="bg-neutral-light rounded-lg overflow-hidden mb-4 relative">
                 <img 
                   src={currentGeneratedGif} 
                   alt={searchQuery}
-                  className="w-full h-full object-cover"
+                  className="w-full object-contain max-h-[350px] mx-auto"
                 />
               </div>
               

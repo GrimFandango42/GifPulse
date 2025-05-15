@@ -123,7 +123,11 @@ export default function GroupMeIntegration({
                 
                 {msg.gif && (
                   <div className="rounded overflow-hidden mt-1">
-                    <img src={msg.gif} alt="Custom GIF" className="w-full h-auto rounded" />
+                    <img 
+                      src={msg.gif} 
+                      alt="Custom GIF" 
+                      className="max-w-full w-full max-h-[250px] object-contain rounded" 
+                    />
                   </div>
                 )}
                 

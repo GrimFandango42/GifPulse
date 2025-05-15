@@ -81,33 +81,80 @@ export async function generateAnimationFrames(
     // Generate animation-specific prompts
     const animationPrompts = [];
     
-    // Define motion descriptors for different frames
+    // First, get AI suggestions for animation sequence 
+  try {
+    // Use GPT to generate a meaningful sequence of animation frames
+    const frameSuggestionPrompt = `
+I need to create a ${frameCount}-frame animation of "${basePrompt}" for a GIF.
+Give me a detailed sequence of prompts where each frame subtly changes to show motion.
+Keep the same character/subject and style through all frames to ensure animation coherence.
+Format as JSON array of strings with no additional text.
+`;
+
+    const gptResponse = await openai.chat.completions.create({
+      model: "gpt-4o", // the newest OpenAI model is "gpt-4o" which was released May 13, 2024
+      messages: [{ role: "user", content: frameSuggestionPrompt }],
+      response_format: { type: "json_object" }
+    });
+    
+    const content = gptResponse.choices[0].message.content;
+    if (content) {
+      try {
+        const parsedResponse = JSON.parse(content);
+        if (Array.isArray(parsedResponse.frames) && parsedResponse.frames.length >= frameCount) {
+          // Use the AI-generated frame sequence
+          for (let i = 0; i < frameCount; i++) {
+            animationPrompts.push(parsedResponse.frames[i]);
+          }
+          console.log("Using AI-generated animation sequence");
+        }
+      } catch (parseError) {
+        console.error("Failed to parse animation sequence from GPT:", parseError);
+        // Will fall back to default sequence below
+      }
+    }
+  } catch (gptError) {
+    console.error("Error getting animation sequence from GPT:", gptError);
+    // Will fall back to default sequence below
+  }
+  
+  // If we don't have enough prompts yet, use fallback method
+  if (animationPrompts.length < frameCount) {
+    console.log("Using fallback animation sequence generation");
+    // Define motion descriptors for different frames - more detailed for better animation
     const motionDescriptors = [
-      "starting position of", 
-      "beginning movement of",
-      "midway through the movement of",
-      "continuing motion of",
-      "final position of"
+      "initial pose, about to start movement of", 
+      "beginning the first step/motion of",
+      "midway through the movement, actively in motion showing",
+      "continuing energetic motion, almost completing the action of",
+      "final position, completing the motion of"
     ];
     
-    // Create frame-specific prompts
+    // Create frame-specific prompts with consistent style instructions
     for (let i = 0; i < frameCount; i++) {
       const frameIndex = Math.min(i, motionDescriptors.length - 1);
       const descriptor = motionDescriptors[frameIndex];
       
-      // Create a frame-specific prompt with motion context
+      // Create a detailed, consistent frame with explicit animation instructions
       animationPrompts.push(
-        `Frame ${i+1}/${frameCount}: ${descriptor} ${basePrompt}. Create a coherent animation frame that shows ${descriptor} the action.`
+        `Animation frame ${i+1}/${frameCount}: ${descriptor} ${basePrompt}. Maintain EXACT same character design, style, and background as other frames. Create consistent colors and proportions. This is frame ${i+1} in a ${frameCount}-frame animation.`
       );
     }
+  }
     
     // Generate all frames in parallel
     const framePromises = animationPrompts.map(async (framePrompt) => {
       try {
-        // Generate each frame
+        // Generate each frame - use a consistent style for better animation
+        const enhancedPrompt = `
+${framePrompt}
+
+EXTREMELY IMPORTANT: Create a simple, clean animation frame with consistent character design, position, size, and colors across all frames. Use a simple, clean art style. Maintain EXACT same background and character proportions as other frames. This is one frame in a sequence for animation.
+`;
+        
         const response = await openai.images.generate({
           model: "dall-e-3",
-          prompt: framePrompt,
+          prompt: enhancedPrompt,
           n: 1,
           size: "1024x1024",
           quality: "standard",
