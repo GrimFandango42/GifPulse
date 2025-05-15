@@ -111,27 +111,45 @@ export default function GifWizard({
         "Finalizing your GIF..."
       ];
       
-      let currentProgress = 0;
-      let messageIndex = 0;
-      
-      const interval = setInterval(() => {
-        currentProgress += Math.random() * 15;
-        if (currentProgress >= 100) {
-          currentProgress = 100;
-          clearInterval(interval);
-        }
+      // If we're not using client-side GIF creation yet, show animated progress
+      if (!isCreating) {
+        let currentProgress = 0;
+        let messageIndex = 0;
         
-        setProgress(currentProgress);
+        const interval = setInterval(() => {
+          currentProgress += Math.random() * 15;
+          if (currentProgress >= 100) {
+            currentProgress = 100;
+            clearInterval(interval);
+          }
+          
+          setProgress(currentProgress);
+          
+          if (currentProgress > messageIndex * 20 && messageIndex < statusMessages.length) {
+            setStatusMessage(statusMessages[messageIndex]);
+            messageIndex++;
+          }
+        }, 300);
         
-        if (currentProgress > messageIndex * 20 && messageIndex < statusMessages.length) {
-          setStatusMessage(statusMessages[messageIndex]);
-          messageIndex++;
-        }
-      }, 300);
-      
-      return () => clearInterval(interval);
+        return () => clearInterval(interval);
+      }
     }
-  }, [screenState]);
+  }, [screenState, isCreating]);
+  
+  // Track client-side GIF creation progress
+  useEffect(() => {
+    if (isCreating) {
+      setProgress(gifCreationProgress);
+      
+      if (gifCreationProgress < 50) {
+        setStatusMessage("Processing animation frames...");
+      } else if (gifCreationProgress < 90) {
+        setStatusMessage("Creating animated GIF...");
+      } else {
+        setStatusMessage("Finalizing your GIF...");
+      }
+    }
+  }, [isCreating, gifCreationProgress]);
 
   // Handle search submission
   const handleGenerateGif = () => {
