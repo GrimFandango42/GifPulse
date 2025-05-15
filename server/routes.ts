@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { z } from "zod";
-import { insertGifSearchSchema } from "@shared/schema";
+import { insertGifSearchSchema, type InsertUserSettings } from "@shared/schema";
 import { generateGif } from "./services/gifGenerator";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -141,12 +141,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Using default user ID 1
       const userId = 1;
       
-      const updates = validationResult.data;
+      // Create a properly typed updates object
+      const { defaultProvider, autoCheckUpdates, saveHistory, gifQuality } = validationResult.data;
       
-      // Convert gifDuration to number if it's a string
-      if (typeof updates.gifDuration === 'string') {
-        updates.gifDuration = parseInt(updates.gifDuration);
+      // Handle the gifDuration specifically to ensure it's a number
+      let gifDuration: number | undefined = undefined;
+      if (validationResult.data.gifDuration !== undefined) {
+        gifDuration = typeof validationResult.data.gifDuration === 'string' 
+          ? parseInt(validationResult.data.gifDuration) 
+          : validationResult.data.gifDuration;
       }
+      
+      const updates: Partial<InsertUserSettings> = {
+        defaultProvider,
+        autoCheckUpdates,
+        gifDuration,
+        gifQuality,
+        saveHistory
+      };
       
       const settings = await storage.updateUserSettings(userId, updates);
       if (!settings) {

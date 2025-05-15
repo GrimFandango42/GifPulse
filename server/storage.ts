@@ -207,10 +207,16 @@ export class MemStorage implements IStorage {
     const id = this.userSettingsId++;
     const now = new Date();
     const settings: UserSettings = { 
-      ...insertSettings, 
+      ...insertSettings,
       id, 
       createdAt: now, 
-      updatedAt: now 
+      updatedAt: now,
+      defaultProvider: insertSettings.defaultProvider || "auto",
+      autoCheckUpdates: insertSettings.autoCheckUpdates !== undefined ? insertSettings.autoCheckUpdates : true,
+      gifDuration: insertSettings.gifDuration || 5,
+      gifQuality: insertSettings.gifQuality || "high",
+      saveHistory: insertSettings.saveHistory !== undefined ? insertSettings.saveHistory : true,
+      apiKeys: insertSettings.apiKeys || {}
     };
     this.userSettings.set(id, settings);
     return settings;
