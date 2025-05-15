@@ -31,7 +31,11 @@ export default function GifWizard({
   const [currentGeneratedGif, setCurrentGeneratedGif] = useState<string | null>(null);
   const [variations, setVariations] = useState<string[]>([]);
   const [selectedVariation, setSelectedVariation] = useState(0);
+  const [animationFrames, setAnimationFrames] = useState<string[]>([]);
   const { toast } = useToast();
+  
+  // Use our GIF creator hook for client-side GIF generation
+  const { createGif, isCreating, progress: gifCreationProgress } = useGifCreator();
 
   // Fetch recent searches
   const { data: recentSearches, isLoading: isLoadingRecent } = useQuery({
@@ -49,10 +53,39 @@ export default function GifWizard({
       const res = await apiRequest('POST', '/api/gif/generate', data);
       return res.json();
     },
-    onSuccess: (data) => {
-      setCurrentGeneratedGif(data.gifUrl);
+    onSuccess: async (data) => {
+      // Save the animation frames if provided
+      if (data.animationFrames && data.animationFrames.length > 1) {
+        setAnimationFrames(data.animationFrames);
+        setStatusMessage("Creating animated GIF...");
+        
+        try {
+          // Create an animated GIF on the client side
+          const gifDataUrl = await createGif(data.animationFrames, {
+            width: 500,
+            height: 500,
+            delay: 200, // 200ms between frames (5 FPS)
+            quality: 10,
+            repeat: 0 // Loop forever
+          });
+          
+          // Use the animated GIF we created
+          setCurrentGeneratedGif(gifDataUrl);
+        } catch (error) {
+          console.error("Error creating animated GIF:", error);
+          // Fallback to the server-provided GIF URL
+          setCurrentGeneratedGif(data.gifUrl);
+        }
+      } else {
+        // Just use the single image/GIF returned from the server
+        setCurrentGeneratedGif(data.gifUrl);
+      }
+      
+      // Set variations and update UI state
       setVariations(data.variations || []);
       setScreenState("result");
+      
+      // Update recent and popular searches
       queryClient.invalidateQueries({ queryKey: ['/api/gif/recent'] });
       queryClient.invalidateQueries({ queryKey: ['/api/gif/popular'] });
     },
@@ -238,14 +271,14 @@ export default function GifWizard({
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {recentSearches?.items?.map((item: any) => (
+                {recentSearches && Array.isArray(recentSearches) ? recentSearches.map((item: any) => (
                   <GifThumbnail
                     key={item.id}
                     query={item.query}
                     gifUrl={item.gifUrl}
                     onClick={() => handleSelectRecentGif(item.query, item.gifUrl)}
                   />
-                ))}
+                )) : null}
               </div>
             )}
             
@@ -264,14 +297,14 @@ export default function GifWizard({
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {popularSearches?.items?.map((item: any) => (
+                {popularSearches && Array.isArray(popularSearches) ? popularSearches.map((item: any) => (
                   <GifThumbnail
                     key={item.id}
                     query={item.query}
                     gifUrl={item.gifUrl}
                     onClick={() => handleSelectRecentGif(item.query, item.gifUrl)}
                   />
-                ))}
+                )) : null}
               </div>
             )}
           </div>
