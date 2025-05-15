@@ -123,9 +123,11 @@ export default function GroupMeIntegration({
         <div className="flex items-center">
           <button
             onClick={onGifButtonClick}
-            className="material-ripple p-2 rounded-full"
+            className="material-ripple p-2 rounded-full flex items-center justify-center bg-neutral-light hover:bg-neutral-200 transition-colors"
+            aria-label="Add GIF"
           >
-            <span className="material-icons text-neutral-medium">gif</span>
+            <span className="material-icons text-primary font-bold">gif</span>
+            <span className="ml-1 text-sm font-medium text-primary">GIF</span>
           </button>
           <div className="flex-1 mx-2 bg-neutral-light rounded-full px-4 py-2">
             <Input
