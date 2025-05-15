@@ -29,9 +29,12 @@ export default function GifWizard({
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState("Analyzing your request...");
   const [currentGeneratedGif, setCurrentGeneratedGif] = useState<string | null>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null); // First frame preview
   const [variations, setVariations] = useState<string[]>([]);
   const [selectedVariation, setSelectedVariation] = useState(0);
   const [animationFrames, setAnimationFrames] = useState<string[]>([]);
+  const [isGeneratingClientGif, setIsGeneratingClientGif] = useState(false); // Flag for generating GIF
+  const [clientGifReady, setClientGifReady] = useState(false); // Flag for when GIF is ready
   const { toast } = useToast();
   
   // Use our GIF creator hook for client-side GIF generation
@@ -56,35 +59,26 @@ export default function GifWizard({
     onSuccess: async (data) => {
       // Save the animation frames if provided
       if (data.animationFrames && data.animationFrames.length > 1) {
+        // Store the animation frames
         setAnimationFrames(data.animationFrames);
-        setStatusMessage("Creating animated GIF...");
         
-        try {
-          // Log animation frames for debugging
-          console.log(`Creating animated GIF from ${data.animationFrames.length} frames`);
-          data.animationFrames.forEach((url, index) => {
-            console.log(`Frame ${index + 1}: ${url.substring(0, 50)}...`);
-          });
-          
-          // Create an animated GIF on the client side
-          const gifDataUrl = await createGif(data.animationFrames, {
-            width: 400,
-            height: 400,
-            delay: 300, // 300ms between frames (3.3 FPS) for better visibility of changes
-            quality: 5,  // Lower for better performance
-            repeat: 0 // Loop forever
-          });
-          
-          // Use the animated GIF we created
-          setCurrentGeneratedGif(gifDataUrl);
-        } catch (error) {
-          console.error("Error creating animated GIF:", error);
-          // Fallback to the server-provided GIF URL
-          setCurrentGeneratedGif(data.gifUrl);
-        }
+        // Show the first frame immediately as a preview
+        setPreviewImage(data.animationFrames[0]);
+        setCurrentGeneratedGif(data.animationFrames[0]); // Start with first frame
+        
+        // Let the user know they can create an animated GIF
+        setClientGifReady(false); // Not ready yet, user needs to click "Play GIF"
+        
+        // Log animation frames for debugging
+        console.log(`Received ${data.animationFrames.length} animation frames`);
+        data.animationFrames.forEach((url: string, index: number) => {
+          console.log(`Frame ${index + 1}: ${url.substring(0, 50)}...`);
+        });
       } else {
         // Just use the single image/GIF returned from the server
         setCurrentGeneratedGif(data.gifUrl);
+        setPreviewImage(data.gifUrl);
+        setClientGifReady(true); // No animation needed
       }
       
       // Set variations and update UI state
@@ -179,6 +173,16 @@ export default function GifWizard({
 
   // Handle send button click
   const handleSendGif = () => {
+    // If we're in the process of creating a GIF, show a toast
+    if (isGeneratingClientGif) {
+      toast({
+        title: "GIF Still Processing",
+        description: "Please wait for the animation to finish generating.",
+      });
+      return;
+    }
+    
+    // If we have an animated GIF or static image ready, send it
     if (currentGeneratedGif) {
       onGifSelect(currentGeneratedGif);
     }
@@ -186,19 +190,68 @@ export default function GifWizard({
 
   // Handle regenerate button click
   const handleRegenerateGif = () => {
+    // Don't allow regeneration while creating a GIF
+    if (isGeneratingClientGif) return;
+    
+    // Reset all states
     setScreenState("generating");
     setProgress(0);
+    setCurrentGeneratedGif(null);
+    setPreviewImage(null);
+    setAnimationFrames([]);
+    setClientGifReady(false);
     
+    // Request a new GIF
     generateGifMutation.mutate({
       query: searchQuery,
       provider: selectedProvider
     });
   };
 
+  // Create animated GIF from frames
+  const handleCreateAnimatedGif = async () => {
+    if (animationFrames.length <= 1) return;
+    
+    try {
+      setIsGeneratingClientGif(true);
+      setStatusMessage("Creating animated GIF...");
+      
+      // Create an animated GIF on the client side
+      const gifDataUrl = await createGif(animationFrames, {
+        width: 400,
+        height: 400,
+        delay: 300, // 300ms between frames (3.3 FPS) for better visibility of changes
+        quality: 5,  // Lower for better performance
+        repeat: 0    // Loop forever
+      });
+      
+      // Use the animated GIF we created
+      setCurrentGeneratedGif(gifDataUrl);
+      setClientGifReady(true);
+      setIsGeneratingClientGif(false);
+      
+      toast({
+        title: "GIF Animation Ready",
+        description: "Your animated GIF has been created!",
+      });
+    } catch (error) {
+      console.error("Error creating animated GIF:", error);
+      setIsGeneratingClientGif(false);
+      
+      toast({
+        title: "Animation Error",
+        description: "Failed to create animated GIF. Using still image instead.",
+        variant: "destructive",
+      });
+    }
+  };
+
   // Handle variation selection
   const handleVariationSelect = (index: number) => {
     setSelectedVariation(index);
     setCurrentGeneratedGif(variations[index]);
+    setPreviewImage(variations[index]);
+    setClientGifReady(true); // Variations are single images
   };
 
   // Handle try again from error
@@ -209,6 +262,9 @@ export default function GifWizard({
   const handleSelectRecentGif = (query: string, gifUrl: string) => {
     setSearchQuery(query);
     setCurrentGeneratedGif(gifUrl);
+    setPreviewImage(gifUrl);
+    setClientGifReady(true); // Recent GIFs are already processed
+    setAnimationFrames([]); // Reset animation frames
     setScreenState("result");
   };
 
@@ -373,14 +429,47 @@ export default function GifWizard({
         {screenState === "result" && currentGeneratedGif && (
           <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
             <div className="w-full max-w-md">
+              {/* GIF/Image Display Area */}
               <div className="bg-neutral-light rounded-lg overflow-hidden mb-4 relative">
+                {/* The actual image/GIF */}
                 <img 
                   src={currentGeneratedGif} 
                   alt={searchQuery}
                   className="w-full object-contain max-h-[350px] mx-auto"
                 />
+                
+                {/* Play Button for Animation - Only show when animation frames exist and GIF isn't generated yet */}
+                {animationFrames.length > 1 && !clientGifReady && !isGeneratingClientGif && (
+                  <div 
+                    className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-40 cursor-pointer" 
+                    onClick={handleCreateAnimatedGif}
+                  >
+                    <div className="flex flex-col items-center text-white">
+                      <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center">
+                        <span className="material-icons text-3xl">play_arrow</span>
+                      </div>
+                      <p className="mt-2 font-medium">Create Animated GIF</p>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Loading Overlay - Show while generating the GIF */}
+                {isGeneratingClientGif && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-60">
+                    <div className="loading-spinner w-10 h-10 border-4 border-neutral-light rounded-full"></div>
+                    <p className="text-white mt-4 font-medium">Creating Animation...</p>
+                    <div className="w-48 bg-neutral-light rounded-full h-2 mt-4">
+                      <div 
+                        className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${gifCreationProgress}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-white text-sm mt-2">{Math.round(gifCreationProgress)}%</p>
+                  </div>
+                )}
               </div>
               
+              {/* Action Buttons */}
               <div className="flex space-x-2">
                 <Button 
                   variant="default"
@@ -390,14 +479,31 @@ export default function GifWizard({
                   <span className="material-icons mr-1 text-sm">send</span>
                   Send
                 </Button>
+                
+                {/* Create GIF button when we have animation frames but not yet created */}
+                {animationFrames.length > 1 && !clientGifReady && !isGeneratingClientGif && (
+                  <Button 
+                    variant="outline"
+                    className="flex-1 py-2 flex items-center justify-center"
+                    onClick={handleCreateAnimatedGif}
+                  >
+                    <span className="material-icons mr-1 text-sm">gif</span>
+                    Animate
+                  </Button>
+                )}
+                
+                {/* Regenerate button */}
                 <Button 
                   variant="outline"
                   className="flex-1 py-2 flex items-center justify-center"
                   onClick={handleRegenerateGif}
+                  disabled={isGeneratingClientGif}
                 >
                   <span className="material-icons mr-1 text-sm">refresh</span>
                   Regenerate
                 </Button>
+                
+                {/* Share button */}
                 <Button 
                   variant="outline"
                   className="flex-none w-12 py-2 flex items-center justify-center"
@@ -407,6 +513,7 @@ export default function GifWizard({
                       description: "GIF link copied to clipboard",
                     });
                   }}
+                  disabled={isGeneratingClientGif}
                 >
                   <span className="material-icons text-sm">share</span>
                 </Button>
@@ -414,13 +521,24 @@ export default function GifWizard({
               
               <div className="mt-4">
                 <h3 className="text-sm font-medium text-neutral-dark mb-1">Model Info</h3>
-                <div className="flex items-center text-xs text-neutral-medium">
+                <div className="flex flex-wrap gap-2 items-center text-xs text-neutral-medium">
                   <span className="px-2 py-1 bg-neutral-light rounded-full">
                     Generated with {selectedProvider === "auto" ? "Best AI" : 
                       selectedProvider === "openai" ? "OpenAI DALL-E" : 
                       selectedProvider === "google" ? "Google Imagen" : "Anthropic Claude"}
                   </span>
-                  <span className="text-neutral-medium text-xs ml-2">5 seconds</span>
+                  
+                  {/* Animation indicator */}
+                  {animationFrames.length > 1 && (
+                    <span className="px-2 py-1 bg-neutral-light rounded-full flex items-center">
+                      <span className="material-icons text-xs mr-1">
+                        {clientGifReady ? "motion_photos_on" : "motion_photos_paused"}
+                      </span>
+                      {clientGifReady ? "Animated GIF" : `${animationFrames.length} Animation Frames`}
+                    </span>
+                  )}
+                  
+                  <span className="text-neutral-medium text-xs">5 seconds</span>
                 </div>
               </div>
               
