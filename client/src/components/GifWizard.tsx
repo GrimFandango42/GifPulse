@@ -1,23 +1,37 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient"; // Combined imports
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import GifThumbnail from "@/components/GifThumbnail";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Removed unused TabsContent
 import { useToast } from "@/hooks/use-toast";
-// Removed: import { useGifCreator } from "@/hooks/use-gif-creator";
-import { GifSearchResponseSchema } from "../../../shared/schema"; // For API response type
+import { GifSearchResponseSchema } from "../../../shared/schema"; 
+
+/**
+ * @file GifWizard.tsx - Main component for the GIF generation wizard.
+ * Handles user input, API calls for GIF generation, and display of results.
+ * Relies on server-side GIF generation and receives Base64 data URLs.
+ */
 
 type AiProvider = "auto" | "openai" | "google" | "anthropic";
 type ScreenState = "search" | "generating" | "result" | "error";
 
 interface GifWizardProps {
+  /** Function to call when the wizard is closed. */
   onClose: () => void;
-  onGifSelect: (gifUrl: string) => void; // This will now be a data URL
+  /** Function to call when a GIF (as a data URL) is selected to be sent. */
+  onGifSelect: (gifUrl: string) => void;
+  /** Function to call to open the settings screen. */
   onOpenSettings: () => void;
 }
 
+/**
+ * Main UI component for the GIF generation wizard.
+ * It allows users to search for GIFs, select an AI provider,
+ * view generation progress, and see the results.
+ * All GIF and thumbnail data is received as Base64 data URLs from the server.
+ */
 export default function GifWizard({ 
   onClose, 
   onGifSelect,
@@ -27,115 +41,97 @@ export default function GifWizard({
   const [selectedProvider, setSelectedProvider] = useState<AiProvider>("auto");
   const [screenState, setScreenState] = useState<ScreenState>("search");
   const [progress, setProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState("Analyzing your request...");
+  const [statusMessage, setStatusMessage] = useState("Enter a prompt to start..."); // Initial message
   
-  // State to hold the Base64 data URL of the generated GIF from the server
   const [currentGeneratedGifUrl, setCurrentGeneratedGifUrl] = useState<string | null>(null);
-  // State to hold the Base64 data URL of the thumbnail from the server
   const [currentThumbnailUrl, setCurrentThumbnailUrl] = useState<string | null>(null);
   
-  const [variations, setVariations] = useState<string[]>([]); // Assuming variations are still single image URLs/dataURLs
-  const [selectedVariation, setSelectedVariation] = useState(0);
+  // Variations are currently not populated by the /api/gif/generate endpoint in its current form.
+  // const [variations, setVariations] = useState<string[]>([]); 
+  // const [selectedVariation, setSelectedVariation] = useState(0);
   const { toast } = useToast();
   
-  // Removed: const { createGif, isCreating, progress: gifCreationProgress } = useGifCreator();
-
-  // Fetch recent searches (remains the same)
+  // Fetch recent GIF searches
   const { data: recentSearches, isLoading: isLoadingRecent } = useQuery<GifSearchResponseSchema[]>({
-    queryKey: ['/api/gif/searches'], // Assuming this is how recent searches are fetched
+    queryKey: ['/api/gif/searches'], 
     queryFn: async () => {
       const res = await apiRequest('GET', '/api/gif/searches');
       return res.json();
     }
   });
 
-  // Fetch popular searches (remains the same, assuming similar structure)
+  // Fetch popular GIF searches (Placeholder - requires a dedicated backend endpoint)
   const { data: popularSearches, isLoading: isLoadingPopular } = useQuery<GifSearchResponseSchema[]>({
-    queryKey: ['/api/gif/popular'], // Assuming this is how popular searches are fetched
+    queryKey: ['/api/gif/popular'], 
      queryFn: async () => {
-      // Replace with actual API call if different from recent searches
-      // For now, using a placeholder if no dedicated popular endpoint exists or structure differs
-      // This might involve a different API endpoint or parameters
-      // const res = await apiRequest('GET', '/api/gif/popular');
-      // return res.json();
-      console.warn("Popular searches API endpoint not specified, using empty array as placeholder.");
+      console.warn("Popular searches API endpoint is not implemented. Returning empty array.");
       return Promise.resolve([]); 
     }
   });
 
-  // Generate GIF mutation
+  // Mutation for generating a new GIF via the server
   const generateGifMutation = useMutation({
     mutationFn: async (data: { query: string, provider: AiProvider }) => {
-      // The server now handles all GIF generation and returns data URLs
       const res = await apiRequest('POST', '/api/gif/generate', data);
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: "Failed to generate GIF. Network error." }));
-        throw new Error(errorData.error || "Failed to generate GIF.");
+        const errorData = await res.json().catch(() => ({ error: "Failed to generate GIF. Network error or non-JSON response." }));
+        throw new Error(errorData.error || `Failed to generate GIF. Status: ${res.status}`);
       }
-      return res.json() as Promise<GifSearchResponseSchema>; // Server returns gifUrl and thumbnailUrl as data URLs
+      return res.json() as Promise<GifSearchResponseSchema>;
     },
     onSuccess: (data) => {
-      // Server now provides the final GIF and thumbnail as data URLs
       setCurrentGeneratedGifUrl(data.gifUrl);
-      setCurrentThumbnailUrl(data.thumbnailUrl); // Use the server-provided thumbnail
-      
-      // Variations might still be a concept, but they'd be single images (data URLs)
-      // setVariations(data.variations || []); // Assuming server might provide variations
-      setVariations([]); // Reset variations if not part of the new API response for simplicity
-
+      setCurrentThumbnailUrl(data.thumbnailUrl);
+      // setVariations([]); // Reset variations as they are not handled in this simplified version
       setScreenState("result");
-      
       queryClient.invalidateQueries({ queryKey: ['/api/gif/searches'] });
-      // queryClient.invalidateQueries({ queryKey: ['/api/gif/popular'] }); // If you have a popular endpoint
     },
     onError: (error: Error) => {
       console.error("Error generating GIF:", error);
       setScreenState("error");
       toast({
         title: "Error Generating GIF",
-        description: error.message || "Failed to generate GIF. Please try again.",
+        description: error.message || "An unknown error occurred. Please try again.",
         variant: "destructive",
       });
     }
   });
 
-  // Handle generation progress (simplified as server does all the work)
+  // Effect for managing progress bar and status messages during generation
   useEffect(() => {
     if (screenState === "generating") {
       const messages = [
         "Contacting AI provider...",
+        "AI is thinking...",
         "Generating image frames...",
-        "Encoding GIF on server...",
+        "Server is encoding GIF...",
         "Almost ready...",
       ];
-      let messageIndex = 0;
-      setProgress(10); // Initial progress
-      setStatusMessage(messages[0]);
+      let messageIdx = 0;
+      setProgress(10); 
+      setStatusMessage(messages[messageIdx]);
 
       const interval = setInterval(() => {
-        setProgress((prev) => {
-          const newProgress = prev + Math.floor(Math.random() * 10) + 5;
-          if (newProgress >= 95 && generateGifMutation.isPending) { // Cap at 95% while pending
-            return 95;
-          }
-          if (!generateGifMutation.isPending) { // If mutation finished, jump to 100
-            clearInterval(interval);
-            return 100;
-          }
-          return newProgress;
-        });
+        if (!generateGifMutation.isPending) {
+          clearInterval(interval);
+          setProgress(100);
+          setStatusMessage("GIF ready!");
+          return;
+        }
         
-        messageIndex = Math.min(Math.floor(progress / (100 / messages.length)), messages.length - 1);
-        setStatusMessage(messages[messageIndex]);
+        setProgress((prev) => Math.min(prev + Math.floor(Math.random() * 10) + 5, 95) );
+        
+        // Cycle through messages based on progress, but don't go past "Almost ready..." while pending
+        messageIdx = Math.min(Math.floor(progress / (95 / (messages.length -1))), messages.length - 2);
+        setStatusMessage(messages[messageIdx]);
 
-      }, 800); // Slower interval as server-side can take time
+      }, 700); // Adjusted interval timing
 
       return () => clearInterval(interval);
     }
-  }, [screenState, generateGifMutation.isPending, progress]);
+  }, [screenState, generateGifMutation.isPending, progress]); // Added progress to dependency array
 
-
-  // Handle search submission
+  /** Handles the submission of the GIF generation request. */
   const handleGenerateGif = () => {
     if (!searchQuery.trim()) {
       toast({
@@ -147,8 +143,8 @@ export default function GifWizard({
     }
     
     setScreenState("generating");
-    setProgress(0); // Reset progress
-    setCurrentGeneratedGifUrl(null); // Reset previous results
+    setProgress(0); 
+    setCurrentGeneratedGifUrl(null); 
     setCurrentThumbnailUrl(null);
     
     generateGifMutation.mutate({
@@ -157,10 +153,10 @@ export default function GifWizard({
     });
   };
 
-  // Handle send button click
+  /** Handles sending the currently displayed GIF. */
   const handleSendGif = () => {
     if (currentGeneratedGifUrl) {
-      onGifSelect(currentGeneratedGifUrl); // Send the data URL of the GIF
+      onGifSelect(currentGeneratedGifUrl); 
     } else {
         toast({
             title: "No GIF Ready",
@@ -170,48 +166,51 @@ export default function GifWizard({
     }
   };
 
-  // Handle regenerate button click
+  /** Handles regenerating the GIF with the current query and provider. */
   const handleRegenerateGif = () => {
+    if (!searchQuery.trim()) {
+      toast({
+        title: "Empty Prompt",
+        description: "Cannot regenerate without a prompt.",
+        variant: "warning",
+      });
+      return;
+    }
     setScreenState("generating");
     setProgress(0);
     setCurrentGeneratedGifUrl(null);
     setCurrentThumbnailUrl(null);
-    // setAnimationFrames([]); // Removed
-    // setClientGifReady(false); // Removed
     
     generateGifMutation.mutate({
-      query: searchQuery, // Uses existing searchQuery
+      query: searchQuery, 
       provider: selectedProvider
     });
   };
 
-  // Removed: handleCreateAnimatedGif function
+  // Variation handling is currently disabled as server does not provide them in this flow.
+  // const handleVariationSelect = (index: number) => {
+  //   if (variations[index]) {
+  //     setSelectedVariation(index);
+  //     setCurrentGeneratedGifUrl(variations[index]); 
+  //     setCurrentThumbnailUrl(variations[index]); 
+  //   }
+  // };
 
-  // Handle variation selection (assuming variations are still single images/dataURLs)
-  const handleVariationSelect = (index: number) => {
-    if (variations[index]) {
-      setSelectedVariation(index);
-      setCurrentGeneratedGifUrl(variations[index]); // Assuming variations are full data URLs
-      setCurrentThumbnailUrl(variations[index]); // Or a specific thumbnail for variation if API provides it
-    }
-  };
-
-  // Handle try again from error
+  /** Resets the wizard to the search state, optionally clearing the query. */
   const handleTryAgain = () => {
     setScreenState("search");
-    setSearchQuery(""); // Optionally clear search query
+    // setSearchQuery(""); // Optional: clear search query on try again
   };
 
+  /** Handles selecting a GIF from the recent searches list. */
   const handleSelectRecentGif = (item: GifSearchResponseSchema) => {
     setSearchQuery(item.query);
     setCurrentGeneratedGifUrl(item.gifUrl);
-    setCurrentThumbnailUrl(item.thumbnailUrl); // Use thumbnail from recent search
-    // setAnimationFrames([]); // Removed
-    // setClientGifReady(true); // Removed, GIF is always "ready" from server
+    setCurrentThumbnailUrl(item.thumbnailUrl);
     setScreenState("result");
   };
 
-  // Search with enter key
+  /** Handles key down event for submitting search with Enter key. */
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !generateGifMutation.isPending) {
       handleGenerateGif();
@@ -219,244 +218,204 @@ export default function GifWizard({
   };
   
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 z-20">
-      <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-xl shadow-lg slide-up max-h-[80vh] overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-black bg-opacity-60 z-20 flex items-end justify-center">
+      <div className="bg-white rounded-t-xl shadow-lg slide-up w-full max-w-2xl max-h-[85vh] flex flex-col">
         {/* Header */}
-        <div className="p-4 border-b border-gray-200 flex justify-between items-center">
+        <div className="p-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
           <h2 className="text-lg font-medium text-neutral-dark">GIF Wizard</h2>
           <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full">
             <span className="material-icons">close</span>
           </Button>
         </div>
         
-        {/* Search Input */}
-        <div className="px-4 py-3 border-b border-gray-200">
+        {/* Search Input Area */}
+        <div className="px-4 py-3 border-b border-gray-200 flex-shrink-0">
           <div className="relative">
             <Input
               type="text"
               id="gifSearchInput"
-              placeholder="Type what you want in your GIF..."
+              placeholder="Describe the GIF you want to create..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="w-full bg-neutral-light rounded-full px-4 py-2 pl-10 pr-24 outline-none"
+              className="w-full bg-neutral-light rounded-full px-4 py-2 pl-10 pr-24 outline-none focus-visible:ring-primary"
               disabled={screenState === "generating"}
             />
             <span className="material-icons absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-medium">search</span>
             <Button
               onClick={handleGenerateGif}
               disabled={screenState === "generating" || !searchQuery.trim()}
-              className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-primary text-white px-3 py-1 rounded-full text-sm font-medium"
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-primary text-white px-3 py-1 rounded-full text-sm font-medium hover:bg-primary-dark"
             >
               {screenState === "generating" ? "Creating..." : "Create"}
             </Button>
           </div>
         </div>
         
-        {/* AI Provider Selection Tabs (remains the same) */}
-        <Tabs defaultValue="auto" onValueChange={(value) => setSelectedProvider(value as AiProvider)}>
+        {/* AI Provider Tabs */}
+        <Tabs defaultValue="auto" onValueChange={(value) => setSelectedProvider(value as AiProvider)} className="flex-shrink-0">
           <TabsList className="px-2 border-b border-gray-200 flex overflow-x-auto hide-scrollbar w-full justify-start h-12 bg-transparent">
-            <TabsTrigger value="auto" className="px-4 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 border-primary data-[state=active]:shadow-none rounded-none">
-              Auto (Best Result)
+            <TabsTrigger value="auto" className="px-3 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none text-neutral-medium">
+              Auto
             </TabsTrigger>
-            <TabsTrigger value="openai" className="px-4 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 border-primary data-[state=active]:shadow-none rounded-none">
-              OpenAI DALL-E
+            <TabsTrigger value="openai" className="px-3 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none text-neutral-medium">
+              OpenAI
             </TabsTrigger>
-            <TabsTrigger value="google" className="px-4 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 border-primary data-[state=active]:shadow-none rounded-none">
-              Google Imagen
+            <TabsTrigger value="google" className="px-3 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none text-neutral-medium">
+              Google
             </TabsTrigger>
-            <TabsTrigger value="anthropic" className="px-4 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 border-primary data-[state=active]:shadow-none rounded-none">
-              Anthropic Claude
+            <TabsTrigger value="anthropic" className="px-3 py-2 text-sm font-medium flex-shrink-0 data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:shadow-none rounded-none text-neutral-medium">
+              Anthropic
             </TabsTrigger>
           </TabsList>
         </Tabs>
         
-        {/* Search History Container */}
-        {screenState === "search" && (
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-neutral-medium mb-3">RECENT SEARCHES</h3>
-              <Button variant="ghost" size="sm" onClick={onOpenSettings} className="text-sm text-primary">
-                Settings
-              </Button>
-            </div>
-            
-            {isLoadingRecent ? (
-              <p>Loading recent searches...</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                {recentSearches && recentSearches.map((item) => (
-                  <GifThumbnail
-                    key={item.id}
-                    query={item.query}
-                    gifUrl={item.thumbnailUrl || item.gifUrl} // Use server thumbnail
-                    onClick={() => handleSelectRecentGif(item)}
-                  />
-                ))}
+        {/* Content Area (Search History, Generating, Result, Error) */}
+        <div className="flex-1 overflow-y-auto">
+          {screenState === "search" && (
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium text-neutral-medium">RECENT SEARCHES</h3>
+                <Button variant="ghost" size="sm" onClick={onOpenSettings} className="text-sm text-primary hover:bg-primary-lightest">
+                  Settings
+                </Button>
               </div>
-            )}
-            
-            <h3 className="text-sm font-medium text-neutral-medium mt-6 mb-3">POPULAR AMONG USERS</h3>
-            {isLoadingPopular ? (
-              <p>Loading popular searches...</p>
-            ) : (
-               <div className="grid grid-cols-2 gap-3">
-                {popularSearches && popularSearches.map((item) => (
-                  <GifThumbnail
-                    key={item.id}
-                    query={item.query}
-                    gifUrl={item.thumbnailUrl || item.gifUrl} // Use server thumbnail
-                    onClick={() => handleSelectRecentGif(item)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* GIF Generation in Progress (Simplified) */}
-        {screenState === "generating" && (
-          <div className="flex-1 flex flex-col items-center justify-center p-6">
-            <div className="w-full max-w-md">
-              <div className="aspect-video bg-neutral-light rounded-lg overflow-hidden mb-4 relative">
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <div className="loading-spinner w-10 h-10 border-4 border-neutral-light rounded-full"></div>
-                  <p className="text-neutral-dark mt-4 text-sm font-medium">Creating your GIF on the server...</p>
-                  <p className="text-neutral-medium text-xs mt-1">{statusMessage}</p>
+              {isLoadingRecent ? (<p className="text-neutral-medium text-sm">Loading recent searches...</p>) : 
+               !recentSearches || recentSearches.length === 0 ? (<p className="text-neutral-medium text-sm">No recent searches yet.</p>) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {recentSearches.map((item) => (
+                    <GifThumbnail
+                      key={item.id}
+                      query={item.query}
+                      gifUrl={item.thumbnailUrl || item.gifUrl}
+                      onClick={() => handleSelectRecentGif(item)}
+                    />
+                  ))}
                 </div>
-              </div>
-              <div className="w-full bg-neutral-light rounded-full h-2 mb-2">
-                <div 
-                  className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${progress}%` }}
-                ></div>
-              </div>
-              <div className="flex items-center justify-between text-xs text-neutral-medium">
-                <span>{statusMessage}</span>
-                <span>{Math.round(progress)}%</span>
-              </div>
-              <Button 
-                variant="destructive"
-                className="w-full py-2 mt-4"
-                onClick={() => {
-                  generateGifMutation.reset(); // Reset mutation state if needed
-                  setScreenState("search");
-                }}
-              >
-                Cancel Generation
-              </Button>
-            </div>
-          </div>
-        )}
-        
-        {/* Generated GIF Result (Uses currentGeneratedGifUrl and currentThumbnailUrl) */}
-        {screenState === "result" && currentGeneratedGifUrl && (
-          <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
-            <div className="w-full max-w-md">
-              <div className="bg-neutral-light rounded-lg overflow-hidden mb-4 relative">
-                <img 
-                  src={currentGeneratedGifUrl} // Display the GIF from server data URL
-                  alt={searchQuery}
-                  className="w-full object-contain max-h-[350px] mx-auto"
-                />
-                {/* Removed Play Button and Loading Overlay for client-side animation */}
-              </div>
+              )}
               
-              <div className="flex space-x-2">
-                <Button 
-                  variant="default"
-                  className="flex-1 py-2 flex items-center justify-center"
-                  onClick={handleSendGif}
-                >
-                  <span className="material-icons mr-1 text-sm">send</span>
-                  Send
-                </Button>
-                <Button 
-                  variant="outline"
-                  className="flex-1 py-2 flex items-center justify-center"
-                  onClick={handleRegenerateGif}
-                >
-                  <span className="material-icons mr-1 text-sm">refresh</span>
-                  Regenerate
-                </Button>
-                <Button 
-                  variant="outline"
-                  className="flex-none w-12 py-2 flex items-center justify-center"
-                  onClick={() => {
-                    navigator.clipboard.writeText(currentGeneratedGifUrl).then(() => {
-                       toast({ title: "Copied!", description: "GIF Data URL copied to clipboard."});
-                    }, () => {
-                       toast({ title: "Copy Failed", description: "Could not copy GIF URL.", variant: "destructive"});
-                    });
-                  }}
-                >
-                  <span className="material-icons text-sm">share</span>
-                </Button>
-              </div>
-              
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-neutral-dark mb-1">Model Info</h3>
-                <div className="flex flex-wrap gap-2 items-center text-xs text-neutral-medium">
-                  <span className="px-2 py-1 bg-neutral-light rounded-full">
-                    Generated with {selectedProvider === "auto" ? "Server Default" : 
-                      selectedProvider === "openai" ? "OpenAI" : 
-                      selectedProvider === "google" ? "Google" : "Anthropic"}
-                  </span>
-                  {/* Removed animation indicator as server handles it */}
-                   <span className="px-2 py-1 bg-neutral-light rounded-full flex items-center">
-                      <span className="material-icons text-xs mr-1">gif</span>
-                      Animated GIF
-                    </span>
-                  {/* <span className="text-neutral-medium text-xs">5 seconds</span> */}
-                </div>
-              </div>
-              
-              {/* Variations display (if variations data is still provided and makes sense) */}
-              {variations.length > 0 && (
-                <div className="mt-4">
-                  <h3 className="text-sm font-medium text-neutral-dark mb-1">Variations (Example)</h3>
-                  <div className="flex space-x-2 overflow-x-auto pb-2 hide-scrollbar">
-                    {variations.map((variationUrl, index) => (
-                      <div 
-                        key={index}
-                        className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer ${
-                          selectedVariation === index ? 'border-2 border-primary' : ''
-                        }`}
-                        onClick={() => handleVariationSelect(index)}
-                      >
-                        <img 
-                          src={variationUrl} // Assuming variationUrl is a data URL
-                          alt={`Variation ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ))}
-                  </div>
+              <h3 className="text-sm font-medium text-neutral-medium mt-6 mb-3">POPULAR SEARCHES</h3>
+              {isLoadingPopular ? (<p className="text-neutral-medium text-sm">Loading popular searches...</p>) : 
+               !popularSearches || popularSearches.length === 0 ? (<p className="text-neutral-medium text-sm">No popular searches available.</p>) : (
+                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {popularSearches.map((item) => (
+                    <GifThumbnail
+                      key={item.id}
+                      query={item.query}
+                      gifUrl={item.thumbnailUrl || item.gifUrl}
+                      onClick={() => handleSelectRecentGif(item)}
+                    />
+                  ))}
                 </div>
               )}
             </div>
-          </div>
-        )}
-        
-        {/* Error State (remains mostly the same) */}
-        {screenState === "error" && (
-          <div className="flex-1 flex flex-col items-center justify-center p-6">
-            <div className="w-full max-w-md text-center">
-              <span className="material-icons text-destructive text-5xl">error_outline</span>
-              <h3 className="text-neutral-dark font-medium mt-4">Something went wrong</h3>
-              <p className="text-neutral-medium text-sm mt-2">
-                We couldn't generate your GIF. Please try again or use different wording.
+          )}
+          
+          {screenState === "generating" && (
+            <div className="flex flex-col items-center justify-center p-6 h-full">
+              <div className="w-full max-w-md text-center">
+                <div className="aspect-video bg-neutral-light rounded-lg overflow-hidden mb-4 relative flex items-center justify-center">
+                    <div className="loading-spinner w-10 h-10 border-4 border-neutral-light rounded-full"></div>
+                </div>
+                <p className="text-neutral-dark mt-2 text-sm font-medium">Creating your GIF on the server...</p>
+                <p className="text-neutral-medium text-xs mt-1 mb-2">{statusMessage}</p>
+                <div className="w-full bg-neutral-light rounded-full h-2 mb-2">
+                  <div 
+                    className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${progress}%` }}
+                  ></div>
+                </div>
+                <div className="flex items-center justify-between text-xs text-neutral-medium">
+                  <span>Progress</span>
+                  <span>{Math.round(progress)}%</span>
+                </div>
+                <Button 
+                  variant="ghost"
+                  className="w-full py-2 mt-4 text-primary hover:bg-primary-lightest"
+                  onClick={() => {
+                    generateGifMutation.reset(); 
+                    setScreenState("search");
+                  }}
+                >
+                  Cancel Generation
+                </Button>
+              </div>
+            </div>
+          )}
+          
+          {screenState === "result" && currentGeneratedGifUrl && (
+            <div className="p-6 flex flex-col items-center">
+              <div className="w-full max-w-md">
+                <div className="bg-neutral-light rounded-lg overflow-hidden mb-4">
+                  <img 
+                    src={currentGeneratedGifUrl} 
+                    alt={searchQuery || "Generated GIF"}
+                    className="w-full object-contain max-h-[350px] mx-auto"
+                  />
+                </div>
+                <div className="flex space-x-2 mb-4">
+                  <Button variant="default" className="flex-1" onClick={handleSendGif}>
+                    <span className="material-icons mr-1 text-sm">send</span>Send
+                  </Button>
+                  <Button variant="outline" className="flex-1" onClick={handleRegenerateGif}>
+                    <span className="material-icons mr-1 text-sm">refresh</span>Regenerate
+                  </Button>
+                  <Button variant="outline" size="icon" onClick={() => {
+                      navigator.clipboard.writeText(currentGeneratedGifUrl).then(() => {
+                         toast({ title: "Copied!", description: "GIF Data URL copied."});
+                      }, () => {
+                         toast({ title: "Copy Failed", variant: "destructive"});
+                      });
+                    }}
+                  >
+                    <span className="material-icons text-sm">share</span>
+                  </Button>
+                </div>
+                <div className="text-xs text-neutral-medium">
+                  <p><strong>Prompt:</strong> {searchQuery}</p>
+                  <p><strong>Provider:</strong> {selectedProvider === "auto" ? "Default" : selectedProvider}</p>
+                </div>
+                {/* Variations UI commented out as it's not fully functional with current server response
+                {variations.length > 0 && (
+                  <div className="mt-4">
+                    <h3 className="text-sm font-medium text-neutral-dark mb-1">Variations (Example)</h3>
+                    <div className="flex space-x-2 overflow-x-auto pb-2 hide-scrollbar">
+                      {variations.map((variationUrl, index) => (
+                        <div 
+                          key={index}
+                          className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer ${
+                            selectedVariation === index ? 'border-2 border-primary' : ''
+                          }`}
+                          onClick={() => handleVariationSelect(index)}
+                        >
+                          <img 
+                            src={variationUrl}
+                            alt={`Variation ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                */}
+              </div>
+            </div>
+          )}
+          
+          {screenState === "error" && (
+            <div className="flex flex-col items-center justify-center p-6 text-center h-full">
+              <span className="material-icons text-destructive text-5xl mb-2">error_outline</span>
+              <h3 className="text-neutral-dark font-medium text-lg">GIF Generation Failed</h3>
+              <p className="text-neutral-medium text-sm mt-1 mb-4">
+                We encountered an error while trying to create your GIF. Please try a different prompt or provider.
               </p>
-              <Button 
-                variant="default"
-                className="mt-6 px-6 py-2"
-                onClick={handleTryAgain}
-              >
+              <Button variant="default" onClick={handleTryAgain}>
                 Try Again
               </Button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

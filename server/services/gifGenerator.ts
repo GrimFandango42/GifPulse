@@ -1,28 +1,43 @@
 import {
   generateGoogleAnimationFramesFlow,
-  // generateGoogleImageFlow, // Available if single image GIF is an option
 } from './google';
 import {
   generateOpenAIAnimationFramesFlow,
-  // generateOpenAIImageFlow,
 } from './openai';
 import {
   generateAnthropicAnimationFramesFlow,
-  // generateAnthropicImageFlow,
 } from './anthropic';
-import { createGifFromImageBuffers, GifOptions } from './gifCreator'; // Assuming createGifFromImageBuffers is exported
+import { createGifFromImageBuffers, GifOptions } from './gifCreator';
 import { loadImage } from 'canvas'; // For reading dimensions from buffer
-import * as z from 'zod'; // For potential schema validation if needed, though flows handle their own.
+// Removed: import * as z from 'zod';
 
+/**
+ * @file Centralized GIF generation service that orchestrates AI image generation
+ * (via Genkit flows) and GIF encoding.
+ */
+
+/**
+ * Specifies the AI provider for image generation.
+ * "auto" will default to a predefined provider (currently Google).
+ */
 export type Provider = "auto" | "openai" | "google" | "anthropic";
 
+/**
+ * Represents the result of a successful GIF generation operation.
+ */
 export interface GenerateGifResult {
+  /** Buffer containing the generated GIF data. */
   gifBuffer: Buffer;
+  /** Buffer containing the thumbnail image data (typically the first frame of the GIF). */
   thumbnailBuffer: Buffer;
+  /** The AI provider that was used for generating the image frames. */
   provider: Provider;
+  /** The original prompt provided by the user. */
   originalPrompt: string;
-  generatedPrompts?: string[]; // Optional: To store prompts used for each frame
-  imageUrls?: string[]; // Optional: To store URLs of generated frames
+  /** Optional array of prompts used for each frame, especially if modified by prompt engineering. */
+  generatedPrompts?: string[];
+  /** Optional array of URLs for the generated source images/frames. */
+  imageUrls?: string[];
 }
 
 const DEFAULT_FRAME_COUNT = 4; // Default number of frames for animation flows
@@ -32,13 +47,28 @@ const DEFAULT_GIF_OPTIONS: GifOptions = {
   repeat: 0,   // 0 for loop indefinitely
 };
 
+/**
+ * Generates a GIF based on a user prompt, using a specified AI provider (or auto-selection).
+ * It fetches multiple animation frames from the selected provider's Genkit flow,
+ * determines dimensions from the first frame, creates a GIF from these frames,
+ * and returns the GIF buffer along with a thumbnail and metadata.
+ *
+ * @param {string} prompt - The user's text prompt for the GIF.
+ * @param {Provider} [provider="auto"] - The AI provider to use. Defaults to "auto" (which then defaults to Google).
+ * @param {number} [frameCount=DEFAULT_FRAME_COUNT] - The number of frames to request for the animation.
+ * @param {GifOptions} [gifOptions=DEFAULT_GIF_OPTIONS] - Options for the GIF encoding process (delay, quality, repeat).
+ * @returns {Promise<GenerateGifResult>} A promise that resolves to an object containing the GIF buffer,
+ * thumbnail buffer, provider used, and other metadata.
+ * @throws Will throw an error if the prompt is empty, the provider is unsupported,
+ * frame generation fails, image dimension reading fails, or GIF creation fails.
+ */
 export async function generateGif(
   prompt: string,
   provider: Provider = "auto",
-  frameCount: number = DEFAULT_FRAME_COUNT, // Allow overriding frame count
+  frameCount: number = DEFAULT_FRAME_COUNT,
   gifOptions: GifOptions = DEFAULT_GIF_OPTIONS
 ): Promise<GenerateGifResult> {
-  if (!prompt) {
+  if (!prompt || prompt.trim() === "") { // Added trim() for robustness
     throw new Error("Prompt cannot be empty.");
   }
 
@@ -61,16 +91,17 @@ export async function generateGif(
         frameGenerationResult = await generateOpenAIAnimationFramesFlow.run({ basePrompt: prompt, frameCount });
         break;
       case "anthropic":
-        // Anthropic flow returns mock image buffers but real generated prompts
         frameGenerationResult = await generateAnthropicAnimationFramesFlow.run({ basePrompt: prompt, frameCount });
         break;
       default:
+        // This case should ideally not be hit if Provider type is used correctly, but good for safety
         throw new Error(`Unsupported provider: ${actualProvider}`);
     }
   } catch (error) {
     console.error(`generateGif: Error calling Genkit flow for provider ${actualProvider}:`, error);
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to generate frames with ${actualProvider}: ${message}`);
+    // Standardizing error message format
+    throw new Error(`Frame generation failed for provider ${actualProvider}: ${message}`);
   }
 
   if (!frameGenerationResult || frameGenerationResult.length === 0) {
@@ -82,15 +113,14 @@ export async function generateGif(
   const generatedPrompts = frameGenerationResult.map(frame => frame.promptUsed);
   const imageUrls = frameGenerationResult.map(frame => frame.imageUrl);
 
-  // Determine width and height from the first image buffer
   let width: number;
   let height: number;
   try {
-    const firstImage = await loadImage(imageBuffers[0]); // loadImage from 'canvas'
+    const firstImage = await loadImage(imageBuffers[0]);
     width = firstImage.width;
     height = firstImage.height;
     if (width <= 0 || height <= 0) {
-        throw new Error(`Invalid dimensions (${width}x${height}) from first frame.`);
+        throw new Error(`Invalid dimensions (${width}x${height}) obtained from the first frame.`);
     }
     console.log(`generateGif: Determined GIF dimensions from first frame: ${width}x${height}`);
   } catch (error) {
@@ -106,7 +136,7 @@ export async function generateGif(
   } catch (error) {
     console.error("generateGif: Error creating GIF from image buffers:", error);
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to create GIF: ${message}`);
+    throw new Error(`GIF encoding failed: ${message}`);
   }
 
   const thumbnailBuffer = imageBuffers[0]; // Use the first frame as the thumbnail
@@ -116,13 +146,12 @@ export async function generateGif(
     thumbnailBuffer,
     provider: actualProvider,
     originalPrompt: prompt,
-    generatedPrompts, // Include the prompts used for each frame
-    imageUrls,        // Include the URLs for each frame
+    generatedPrompts,
+    imageUrls,
   };
 }
 
-// Example of a more specific GIF generation function if needed in the future
+// Commented out example function as it's not part of the core logic.
 // export async function generateSpecificAnimation(prompt: string): Promise<GenerateGifResult> {
-//   // Could call generateGif with specific parameters or have slightly different logic
 //   return generateGif(prompt, "openai", 5, { delay: 150, quality: 10 });
 // }

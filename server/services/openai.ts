@@ -1,11 +1,19 @@
 import { defineFlow } from '@genkit-ai/flow';
-import { openAI, dalle3, gpt4o } from 'genkitx-openai'; // Assuming models are exported like this or accessed via openAI.model()
+import { openAI, dalle3, gpt4o } from 'genkitx-openai';
 import * as z from 'zod';
 import fetch from 'node-fetch';
-// Keep GenerationResponse if used by other parts of the application or for consistency
-import { GenerationResponse } from '../../shared/schema'; 
+// Removed: import { GenerationResponse } from '../../shared/schema'; 
 
-// Helper function to fetch image and convert to Buffer
+/**
+ * @file Genkit flows for interacting with OpenAI services (DALL-E 3 for image generation, GPT-4o for prompt engineering).
+ */
+
+/**
+ * Fetches an image from a URL and returns it as a Buffer.
+ * @param {string} url - The URL of the image to fetch.
+ * @returns {Promise<Buffer>} A Promise that resolves with the image data as a Buffer.
+ * @throws Will throw an error if the fetch request fails or the response is not OK.
+ */
 async function fetchImageBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -15,53 +23,57 @@ async function fetchImageBuffer(url: string): Promise<Buffer> {
   return Buffer.from(arrayBuffer);
 }
 
-// Schema for image output
+/**
+ * Zod schema for the output of image generation flows.
+ * Contains the image URL, the image buffer, and the prompt used (which may be revised by the AI).
+ */
 const ImageOutputSchema = z.object({
   imageUrl: z.string().url(),
   imageBuffer: z.instanceof(Buffer),
   promptUsed: z.string(), 
 });
 
-// 1. Flow to generate a single image using DALL-E 3
+/**
+ * @description Genkit flow to generate a single image using OpenAI's DALL-E 3 model.
+ * @param {string} prompt - The text prompt for image generation.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>>} An object containing the generated image's URL,
+ * its buffer, and the (potentially revised) prompt used by DALL-E 3.
+ * @throws Will throw an error if the prompt is empty, image generation fails, or the image URL is not returned.
+ */
 export const generateOpenAIImageFlow = defineFlow(
   {
     name: 'generateOpenAIImageFlow',
-    inputSchema: z.string(), // Text prompt
+    inputSchema: z.string(), 
     outputSchema: ImageOutputSchema,
   },
   async (prompt) => {
     console.log(`generateOpenAIImageFlow: Received prompt: "${prompt}"`);
-    if (!prompt) {
+    if (!prompt || prompt.trim() === "") {
         throw new Error("Prompt cannot be empty for DALL-E 3.");
     }
 
-    // Note: genkitx-openai might have a slightly different API.
-    // Assuming it's similar to googleAI.generateImage or provides access to the model directly.
-    // The DALL-E 3 model via OpenAI typically returns a URL and a revised prompt.
     const imageResponse = await openAI.generateImage({
-      model: dalle3, // Or the string "dall-e-3" if the plugin takes it that way
+      model: dalle3, 
       prompt: prompt,
-      // DALL-E 3 specific options can be added here, e.g., size, quality, style
-      // size: "1024x1024", // example
-      // quality: "standard", // example
-      // n: 1, // DALL-E 3 currently supports n=1
+      // DALL-E 3 specific options:
+      // size: "1024x1024", // "1024x1024", "1792x1024", or "1024x1792"
+      // quality: "standard", // "standard" or "hd"
+      // style: "vivid", // "vivid" or "natural"
+      // n: 1, // DALL-E 3 only supports n=1
     });
 
-    // DALL-E 3 API returns a list of generated images (usually 1 for DALL-E 3 per request)
-    // Each image object contains a URL and often a 'revised_prompt'.
     const generatedImage = imageResponse.images[0];
     if (!generatedImage || !generatedImage.url) {
       throw new Error('No image URL returned from OpenAI DALL-E 3 generation.');
     }
     const imageUrl = generatedImage.url;
-    // DALL-E 3 often revises prompts for safety/clarity. It's good to use/store this.
     const revisedPrompt = (generatedImage as any).revised_prompt || prompt; 
 
     console.log(`generateOpenAIImageFlow: Generated image URL: ${imageUrl}`);
     console.log(`generateOpenAIImageFlow: Revised prompt: "${revisedPrompt}"`);
 
     const imageBuffer = await fetchImageBuffer(imageUrl);
-    console.log(`generateOpenAIImageFlow: Fetched image buffer (size: ${imageBuffer.length})`);
+    // console.log(`generateOpenAIImageFlow: Fetched image buffer (size: ${imageBuffer.length})`);
     
     return {
       imageUrl: imageUrl,
@@ -71,13 +83,23 @@ export const generateOpenAIImageFlow = defineFlow(
   }
 );
 
-// 2. Flow to generate animation frames using GPT-4o and DALL-E 3
+/**
+ * @description Genkit flow to generate a sequence of animation frames using OpenAI.
+ * It uses GPT-4o for prompt engineering to create descriptions for each frame,
+ * and then DALL-E 3 to generate the images.
+ * @param {object} input - The input object.
+ * @param {string} input.basePrompt - The base prompt for the animation sequence.
+ * @param {number} [input.frameCount=4] - The number of frames to generate.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * the generated image's URL, its buffer, and the specific (potentially revised) prompt used for that frame.
+ * @throws Will throw an error if frame generation or prompt engineering fails.
+ */
 export const generateOpenAIAnimationFramesFlow = defineFlow(
   {
     name: 'generateOpenAIAnimationFramesFlow',
     inputSchema: z.object({
       basePrompt: z.string(),
-      frameCount: z.number().int().positive().optional().default(4), // Default to 4 frames
+      frameCount: z.number().int().positive().optional().default(4),
     }),
     outputSchema: z.array(ImageOutputSchema),
   },
@@ -85,7 +107,6 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
     console.log(`generateOpenAIAnimationFramesFlow: Received input: ${JSON.stringify(input)}`);
     const { basePrompt, frameCount } = input;
 
-    // Step 1: Use GPT-4o to generate descriptive prompts for each frame
     const promptEngineeringRequest = `
       Based on the prompt "${basePrompt}", generate ${frameCount} distinct animation frame descriptions for DALL-E 3.
       Each description should be a short, actionable prompt.
@@ -98,7 +119,7 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
 
     try {
       const llmResponse = await openAI.generateText({
-        model: gpt4o, // Using GPT-4o for prompt engineering
+        model: gpt4o, 
         prompt: promptEngineeringRequest,
         output: { format: 'json' }, 
       });
@@ -114,13 +135,12 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
         throw new Error('GPT-4o did not return a valid JSON array of strings for frame prompts.');
       }
       if (framePrompts.length !== frameCount) {
-        console.warn(`GPT-4o returned ${framePrompts.length} prompts, but ${frameCount} were requested. Using returned prompts.`);
-        if(framePrompts.length === 0) throw new Error("GPT-4o returned an empty array of prompts.");
+        console.warn(`GPT-4o returned ${framePrompts.length} prompts, but ${frameCount} were requested. Using returned prompts if available, otherwise error.`);
+        if(framePrompts.length === 0) throw new Error("GPT-4o returned an empty array of prompts, cannot proceed.");
       }
     } catch (error) {
       console.error('Error generating frame prompts with GPT-4o:', error);
-      // Fallback: use simple numbered prompts if GPT-4o fails
-      framePrompts = Array.from({ length: frameCount }, (_, i) => `${basePrompt}, animation frame ${i + 1} of ${frameCount}`);
+      framePrompts = Array.from({ length: frameCount }, (_, i) => `${basePrompt}, animation frame ${i + 1} of ${frameCount} (fallback)`);
       console.warn(`generateOpenAIAnimationFramesFlow: Falling back to simple prompts: ${JSON.stringify(framePrompts)}`);
     }
     
@@ -132,14 +152,13 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
       const framePrompt = framePrompts[i];
       console.log(`generateOpenAIAnimationFramesFlow: Generating frame ${i + 1} with prompt: "${framePrompt}"`);
       try {
-        // Re-use the single image generation logic, could also call generateOpenAIImageFlow
         const imageResponse = await openAI.generateImage({
           model: dalle3,
           prompt: framePrompt,
         });
         const generatedImage = imageResponse.images[0];
         if (!generatedImage || !generatedImage.url) {
-          throw new Error(`No image URL returned for frame ${i + 1}.`);
+          throw new Error(`No image URL returned for frame ${i + 1} with prompt "${framePrompt}".`);
         }
         const imageUrl = generatedImage.url;
         const revisedPrompt = (generatedImage as any).revised_prompt || framePrompt;
@@ -153,8 +172,9 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
           promptUsed: revisedPrompt,
         });
       } catch (frameError) {
-        console.error(`Error generating frame ${i + 1} for prompt "${framePrompt}":`, frameError);
-        throw new Error(`Failed to generate frame ${i + 1}: ${(frameError as Error).message}`);
+        const message = frameError instanceof Error ? frameError.message : String(frameError);
+        console.error(`Error generating frame ${i + 1} for prompt "${framePrompt}":`, message);
+        throw new Error(`Failed to generate frame ${i + 1} ("${framePrompt}"): ${message}`);
       }
     }
     console.log(`generateOpenAIAnimationFramesFlow: Successfully generated ${frameResults.length} frames.`);
@@ -162,7 +182,16 @@ export const generateOpenAIAnimationFramesFlow = defineFlow(
   }
 );
 
-// 3. Flow to generate image variations using GPT-4o and DALL-E 3
+/**
+ * @description Genkit flow to generate variations of an image based on a prompt using OpenAI.
+ * It uses GPT-4o for prompt engineering to create varied prompts, and then DALL-E 3 to generate the images.
+ * @param {object} input - The input object.
+ * @param {string} input.basePrompt - The base prompt to generate variations from.
+ * @param {number} [input.count=3] - The number of variations to generate.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * the generated image's URL, its buffer, and the specific (potentially revised) varied prompt used.
+ * @throws Will throw an error if variation prompt generation or image generation fails.
+ */
 export const generateOpenAIImageVariationsFlow = defineFlow(
   {
     name: 'generateOpenAIImageVariationsFlow',
@@ -176,7 +205,6 @@ export const generateOpenAIImageVariationsFlow = defineFlow(
     console.log(`generateOpenAIImageVariationsFlow: Received input: ${JSON.stringify(input)}`);
     const { basePrompt, count } = input;
 
-    // Step 1: Use GPT-4o to generate varied prompts
     const promptVariationRequest = `
       Based on the prompt "${basePrompt}", generate ${count} creative variations of this prompt for DALL-E 3.
       Each variation should lead to a visually distinct image but clearly related to the original concept.
@@ -203,13 +231,13 @@ export const generateOpenAIImageVariationsFlow = defineFlow(
         throw new Error('GPT-4o did not return a valid JSON array of strings for varied prompts.');
       }
        if (variedPrompts.length !== count) {
-        console.warn(`GPT-4o returned ${variedPrompts.length} prompts for variations, but ${count} were requested.`);
-        if(variedPrompts.length === 0) throw new Error("GPT-4o returned an empty array of varied prompts.");
+        console.warn(`GPT-4o returned ${variedPrompts.length} prompts for variations, but ${count} were requested. Using returned prompts if available, otherwise error.`);
+        if(variedPrompts.length === 0) throw new Error("GPT-4o returned an empty array of varied prompts, cannot proceed.");
       }
     } catch (error) {
       console.error('Error generating varied prompts with GPT-4o:', error);
       const styles = ["impressionistic", "pixel art", "cyberpunk", "fantasy art", "watercolor painting"];
-      variedPrompts = Array.from({ length: count }, (_, i) => `${basePrompt}, in a ${styles[i % styles.length]} style`);
+      variedPrompts = Array.from({ length: count }, (_, i) => `${basePrompt}, in a ${styles[i % styles.length]} style (fallback)`);
       console.warn(`generateOpenAIImageVariationsFlow: Falling back to simple style variations: ${JSON.stringify(variedPrompts)}`);
     }
 
@@ -226,7 +254,7 @@ export const generateOpenAIImageVariationsFlow = defineFlow(
         });
         const generatedImage = imageResponse.images[0];
          if (!generatedImage || !generatedImage.url) {
-          throw new Error(`No image URL returned for variation ${i + 1}.`);
+          throw new Error(`No image URL returned for variation ${i + 1} with prompt "${variedPrompt}".`);
         }
         const imageUrl = generatedImage.url;
         const revisedPrompt = (generatedImage as any).revised_prompt || variedPrompt;
@@ -234,14 +262,16 @@ export const generateOpenAIImageVariationsFlow = defineFlow(
         console.log(`generateOpenAIImageVariationsFlow: Variation ${i + 1} image URL: ${imageUrl}`);
         console.log(`generateOpenAIImageVariationsFlow: Variation ${i + 1} revised prompt: "${revisedPrompt}"`);
         const imageBuffer = await fetchImageBuffer(imageUrl);
+        // console.log(`generateOpenAIImageVariationsFlow: Variation ${i + 1} fetched buffer (size: ${imageBuffer.length})`);
         variationResults.push({
           imageUrl: imageUrl,
           imageBuffer: imageBuffer,
           promptUsed: revisedPrompt,
         });
       } catch (variationError) {
-         console.error(`Error generating variation ${i + 1} for prompt "${variedPrompt}":`, variationError);
-        throw new Error(`Failed to generate variation ${i + 1}: ${(variationError as Error).message}`);
+        const message = variationError instanceof Error ? variationError.message : String(variationError);
+        console.error(`Error generating variation ${i + 1} for prompt "${variedPrompt}":`, message);
+        throw new Error(`Failed to generate variation ${i + 1} ("${variedPrompt}"): ${message}`);
       }
     }
     console.log(`generateOpenAIImageVariationsFlow: Successfully generated ${variationResults.length} variations.`);
@@ -249,35 +279,5 @@ export const generateOpenAIImageVariationsFlow = defineFlow(
   }
 );
 
-/*
-// Commenting out old functions as they are being replaced by Genkit flows.
-// It's good practice to remove them once the new flows are tested and confirmed.
-
-// Original Giphy fallback (commented out as Genkit flows should primarily use the AI provider)
-// async function getGiphyFallback(prompt: string): Promise<string | null> {
-//   // ... implementation ...
-// }
-
-export async function generateImage(prompt: string, service: string = 'openai'): Promise<GenerationResponse> {
-  // ... old implementation ...
-  throw new Error("Old generateImage function called; use Genkit flows instead.");
-}
-
-export async function generateAnimationFrames(
-  basePrompt: string,
-  frameCount: number = 5, // Default to 5 frames
-  service: string = 'openai'
-): Promise<GenerationResponse[]> {
-  // ... old implementation ...
-  throw new Error("Old generateAnimationFrames function called; use Genkit flows instead.");
-}
-
-export async function generateImageVariations(
-  basePrompt: string,
-  numVariations: number = 3,
-  service: string = 'openai'
-): Promise<GenerationResponse[]> {
-  // ... old implementation ...
-  throw new Error("Old generateImageVariations function called; use Genkit flows instead.");
-}
-*/
+// Old placeholder functions (generateImage, generateAnimationFrames, generateImageVariations)
+// and Giphy fallback are now fully removed.

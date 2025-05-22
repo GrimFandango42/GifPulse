@@ -1,9 +1,6 @@
 import { defineFlow } from '@genkit-ai/flow';
 import { anthropic, claude3Haiku } from 'genkitx-anthropic'; // Using Haiku for cost-effectiveness in prompt engineering
 import * as z from 'zod';
-// Removed fetch and GenerationResponse as they are not used in the mock implementation
-// import fetch from 'node-fetch';
-// import { GenerationResponse } from '../../shared/schema'; 
 
 // Placeholder Image (1x1 transparent PNG as Base64)
 const PLACEHOLDER_IMAGE_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -18,7 +15,14 @@ const ImageOutputSchema = z.object({
   promptUsed: z.string(),
 });
 
-// 1. Mock Flow to generate a single image
+/**
+ * @description Mock Genkit flow for generating a single image using Anthropic.
+ * Since Anthropic Claude models (via genkitx-anthropic) do not directly support
+ * text-to-image generation, this flow returns a placeholder image.
+ * @param {string} prompt - The text prompt for image generation.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>>} An object containing a placeholder image URL,
+ * a placeholder image buffer, and the original prompt.
+ */
 export const generateAnthropicImageFlow = defineFlow(
   {
     name: 'generateAnthropicImageFlow',
@@ -37,7 +41,16 @@ export const generateAnthropicImageFlow = defineFlow(
   }
 );
 
-// 2. Mock Flow to generate animation frames (Uses Claude for prompt engineering)
+/**
+ * @description Genkit flow for generating animation frame prompts using Anthropic Claude Haiku,
+ * and then returning mock image data for each frame.
+ * Image generation itself is mocked as Anthropic models do not directly support text-to-image.
+ * @param {object} input - Object containing basePrompt (string) and frameCount (number).
+ * @param {string} input.basePrompt - The base prompt for generating animation frame descriptions.
+ * @param {number} [input.frameCount=4] - The number of animation frames to generate prompts for.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * a placeholder image URL, a placeholder image buffer, and the Claude-generated prompt for that frame.
+ */
 export const generateAnthropicAnimationFramesFlow = defineFlow(
   {
     name: 'generateAnthropicAnimationFramesFlow',
@@ -51,7 +64,6 @@ export const generateAnthropicAnimationFramesFlow = defineFlow(
     console.log(`generateAnthropicAnimationFramesFlow: Received input: ${JSON.stringify(input)}`);
     const { basePrompt, frameCount } = input;
 
-    // Step 1: Use Claude Haiku to generate descriptive prompts for each frame
     const promptEngineeringRequest = `
       Based on the prompt "${basePrompt}", generate ${frameCount} distinct animation frame descriptions.
       Each description should be a short, actionable prompt.
@@ -62,7 +74,7 @@ export const generateAnthropicAnimationFramesFlow = defineFlow(
     let framePrompts: string[];
 
     try {
-      const llmResponse = await anthropic.generate({ // Corrected to use anthropic.generate
+      const llmResponse = await anthropic.generate({
         model: claude3Haiku, 
         prompt: promptEngineeringRequest,
         output: { format: 'json' }, 
@@ -102,7 +114,16 @@ export const generateAnthropicAnimationFramesFlow = defineFlow(
   }
 );
 
-// 3. Mock Flow to generate image variations (Uses Claude for prompt engineering)
+/**
+ * @description Genkit flow for generating varied prompts using Anthropic Claude Haiku,
+ * and then returning mock image data for each variation.
+ * Image generation itself is mocked.
+ * @param {object} input - Object containing basePrompt (string) and count (number).
+ * @param {string} input.basePrompt - The base prompt for generating variations.
+ * @param {number} [input.count=3] - The number of varied prompts to generate.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * a placeholder image URL, a placeholder image buffer, and the Claude-generated varied prompt.
+ */
 export const generateAnthropicImageVariationsFlow = defineFlow(
   {
     name: 'generateAnthropicImageVariationsFlow',
@@ -126,7 +147,7 @@ export const generateAnthropicImageVariationsFlow = defineFlow(
     let variedPrompts: string[];
 
     try {
-      const llmResponse = await anthropic.generate({ // Corrected to use anthropic.generate
+      const llmResponse = await anthropic.generate({
         model: claude3Haiku,
         prompt: promptVariationRequest,
         output: { format: 'json' },
@@ -166,23 +187,5 @@ export const generateAnthropicImageVariationsFlow = defineFlow(
   }
 );
 
-/*
-// Commenting out old placeholder functions as they are replaced by Genkit flows.
-export async function generateImage(prompt: string): Promise<GenerationResponse> {
-  throw new Error(NOT_AVAILABLE_MESSAGE);
-}
-
-export async function generateAnimationFrames(
-  basePrompt: string,
-  frameCount: number = 4
-): Promise<GenerationResponse[]> {
-  throw new Error(NOT_AVAILABLE_MESSAGE);
-}
-
-export async function generateImageVariations(
-  basePrompt: string,
-  numVariations: number = 3
-): Promise<GenerationResponse[]> {
-  throw new Error(NOT_AVAILABLE_MESSAGE);
-}
-*/
+// Old placeholder functions are now fully removed.
+// The commented out section at the end of the original file is gone.

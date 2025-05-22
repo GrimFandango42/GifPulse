@@ -2,45 +2,61 @@ import { defineFlow } from '@genkit-ai/flow';
 import { googleAI, imagen2, gemini15Flash } from '@genkit-ai/googleai';
 import * as z from 'zod';
 import fetch from 'node-fetch';
-import { GenerationResponse } from '../../shared/schema'; // Keep if used by other functions or for consistency
+// Removed: import { GenerationResponse } from '../../shared/schema'; 
 
-// Helper function to fetch image and convert to Buffer
+/**
+ * @file Genkit flows for interacting with Google AI services (Imagen for image generation, Gemini for prompt engineering).
+ */
+
+/**
+ * Fetches an image from a URL and returns it as a Buffer.
+ * @param {string} url - The URL of the image to fetch.
+ * @returns {Promise<Buffer>} A Promise that resolves with the image data as a Buffer.
+ * @throws Will throw an error if the fetch request fails or the response is not OK.
+ */
 async function fetchImageBuffer(url: string): Promise<Buffer> {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Failed to fetch image from ${url}: ${response.statusText}`);
+    throw new Error(`Failed to fetch image from ${url}: ${response.statusText} (status: ${response.status})`);
   }
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
 
-// Schema for image output
+/**
+ * Zod schema for the output of image generation flows.
+ * Contains the image URL, the image buffer, and the prompt used.
+ */
 const ImageOutputSchema = z.object({
   imageUrl: z.string().url(),
   imageBuffer: z.instanceof(Buffer),
-  promptUsed: z.string().optional(), // Optional: to store the exact prompt used for this image
+  promptUsed: z.string().optional(),
 });
 
-// 1. Flow to generate a single image
+/**
+ * @description Genkit flow to generate a single image using Google's Imagen model.
+ * @param {string} prompt - The text prompt for image generation.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>>} An object containing the generated image's URL,
+ * its buffer, and the prompt used.
+ * @throws Will throw an error if the prompt is empty, image generation fails, or the image URL is not returned.
+ */
 export const generateGoogleImageFlow = defineFlow(
   {
     name: 'generateGoogleImageFlow',
-    inputSchema: z.string(), // Text prompt
+    inputSchema: z.string(), 
     outputSchema: ImageOutputSchema,
   },
   async (prompt) => {
     console.log(`generateGoogleImageFlow: Received prompt: "${prompt}"`);
-    if (!prompt) {
+    if (!prompt || prompt.trim() === "") { // Added trim for robustness
         throw new Error("Prompt cannot be empty.");
     }
     const imageResponse = await googleAI.generateImage({
-      model: imagen2, // Specify the Imagen model
+      model: imagen2, 
       prompt: prompt,
-      // You can add other parameters like aspectRatio, count (if supported for single image)
-      // count: 1, // Default for generateImage is usually 1
+      // count: 1, // Implicitly 1 for generateImage typically
     });
 
-    // Assuming imageResponse.images[0].url is the structure
     const imageData = imageResponse.images[0];
     if (!imageData || !imageData.url) {
       throw new Error('No image URL returned from Google AI image generation.');
@@ -58,7 +74,17 @@ export const generateGoogleImageFlow = defineFlow(
   }
 );
 
-// 2. Flow to generate animation frames
+/**
+ * @description Genkit flow to generate a sequence of animation frames using Google AI.
+ * It uses Gemini for prompt engineering to create descriptions for each frame,
+ * and then Imagen to generate the images.
+ * @param {object} input - The input object.
+ * @param {string} input.basePrompt - The base prompt for the animation sequence.
+ * @param {number} [input.frameCount=4] - The number of frames to generate.
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * the generated image's URL, its buffer, and the specific prompt used for that frame.
+ * @throws Will throw an error if frame generation or prompt engineering fails.
+ */
 export const generateGoogleAnimationFramesFlow = defineFlow(
   {
     name: 'generateGoogleAnimationFramesFlow',
@@ -72,7 +98,6 @@ export const generateGoogleAnimationFramesFlow = defineFlow(
     console.log(`generateGoogleAnimationFramesFlow: Received input: ${JSON.stringify(input)}`);
     const { basePrompt, frameCount } = input;
 
-    // Step 1: Use Gemini to generate descriptive prompts for each frame
     const promptEngineeringRequest = `
       Based on the prompt "${basePrompt}", generate ${frameCount} distinct animation frame descriptions.
       Each description should be a short, actionable prompt for an image generation model.
@@ -84,9 +109,9 @@ export const generateGoogleAnimationFramesFlow = defineFlow(
 
     try {
       const llmResponse = await googleAI.generateText({
-        model: gemini15Flash, // Using Gemini for prompt engineering
+        model: gemini15Flash, 
         prompt: promptEngineeringRequest,
-        output: { format: 'json' }, // Request JSON output
+        output: { format: 'json' }, 
       });
       
       const generatedText = llmResponse.text();
@@ -100,14 +125,12 @@ export const generateGoogleAnimationFramesFlow = defineFlow(
         throw new Error('Gemini did not return a valid JSON array of strings for frame prompts.');
       }
       if (framePrompts.length !== frameCount) {
-        console.warn(`Gemini returned ${framePrompts.length} prompts, but ${frameCount} were requested. Using returned prompts.`);
-        // Adjust frameCount or handle as appropriate. For now, proceed with what was returned if any.
-        if(framePrompts.length === 0) throw new Error("Gemini returned an empty array of prompts.");
+        console.warn(`Gemini returned ${framePrompts.length} prompts, but ${frameCount} were requested. Using returned prompts if available, otherwise error.`);
+        if(framePrompts.length === 0) throw new Error("Gemini returned an empty array of prompts, cannot proceed.");
       }
     } catch (error) {
       console.error('Error generating frame prompts with Gemini:', error);
-      // Fallback: use simple numbered prompts if Gemini fails
-      framePrompts = Array.from({ length: frameCount }, (_, i) => `${basePrompt}, frame ${i + 1}`);
+      framePrompts = Array.from({ length: frameCount }, (_, i) => `${basePrompt}, frame ${i + 1} (fallback)`);
       console.warn(`generateGoogleAnimationFramesFlow: Falling back to simple prompts: ${JSON.stringify(framePrompts)}`);
     }
     
@@ -125,21 +148,20 @@ export const generateGoogleAnimationFramesFlow = defineFlow(
         });
         const imageData = imageResponse.images[0];
         if (!imageData || !imageData.url) {
-          throw new Error(`No image URL returned for frame ${i + 1}.`);
+          throw new Error(`No image URL returned for frame ${i + 1} with prompt "${framePrompt}".`);
         }
         console.log(`generateGoogleAnimationFramesFlow: Frame ${i + 1} image URL: ${imageData.url}`);
         const imageBuffer = await fetchImageBuffer(imageData.url);
-        console.log(`generateGoogleAnimationFramesFlow: Frame ${i + 1} fetched buffer (size: ${imageBuffer.length})`);
+        // console.log(`generateGoogleAnimationFramesFlow: Frame ${i + 1} fetched buffer (size: ${imageBuffer.length})`);
         frameResults.push({
           imageUrl: imageData.url,
           imageBuffer: imageBuffer,
           promptUsed: framePrompt,
         });
       } catch (frameError) {
-        console.error(`Error generating frame ${i + 1} for prompt "${framePrompt}":`, frameError);
-        // Decide on error strategy: skip frame, or fail flow?
-        // For now, re-throwing to make the flow fail if any frame fails.
-        throw new Error(`Failed to generate frame ${i + 1}: ${(frameError as Error).message}`);
+        const message = frameError instanceof Error ? frameError.message : String(frameError);
+        console.error(`Error generating frame ${i + 1} for prompt "${framePrompt}":`, message);
+        throw new Error(`Failed to generate frame ${i + 1} ("${framePrompt}"): ${message}`);
       }
     }
     console.log(`generateGoogleAnimationFramesFlow: Successfully generated ${frameResults.length} frames.`);
@@ -147,25 +169,31 @@ export const generateGoogleAnimationFramesFlow = defineFlow(
   }
 );
 
-// 3. Flow to generate image variations
+/**
+ * @description Genkit flow to generate variations of an image based on a prompt using Google AI.
+ * It uses Gemini for prompt engineering to create varied prompts, and then Imagen to generate the images.
+ * @param {object} input - The input object.
+ * @param {string} input.basePrompt - The base prompt to generate variations from.
+ * @param {number} [input.count=3] - The number of variations to generate.
+ * @param {string} [input.variationStrength="medium"] - Hint for prompt variation strength (currently illustrative).
+ * @returns {Promise<z.infer<typeof ImageOutputSchema>[]>} An array of objects, each containing
+ * the generated image's URL, its buffer, and the specific varied prompt used.
+ * @throws Will throw an error if variation prompt generation or image generation fails.
+ */
 export const generateGoogleImageVariationsFlow = defineFlow(
   {
     name: 'generateGoogleImageVariationsFlow',
     inputSchema: z.object({
-      basePrompt: z.string(), // The original prompt for the image to vary
-      // Note: Imagen might have specific "variation" capabilities (e.g., providing an input image).
-      // This flow currently creates variations by modifying prompts.
-      // If Imagen supports image-to-image variations, this flow could be adapted.
+      basePrompt: z.string(),
       count: z.number().int().positive().optional().default(3),
-      variationStrength: z.string().optional().default('medium'), // Example: 'subtle', 'medium', 'strong'
+      variationStrength: z.string().optional().default('medium'), 
     }),
     outputSchema: z.array(ImageOutputSchema),
   },
   async (input) => {
     console.log(`generateGoogleImageVariationsFlow: Received input: ${JSON.stringify(input)}`);
-    const { basePrompt, count } = input;
+    const { basePrompt, count } = input; // variationStrength is illustrative here
 
-    // Step 1: Use Gemini to generate varied prompts
     const promptVariationRequest = `
       Based on the prompt "${basePrompt}", generate ${count} creative variations of this prompt.
       Each variation should lead to a visually distinct image but clearly related to the original concept.
@@ -194,14 +222,13 @@ export const generateGoogleImageVariationsFlow = defineFlow(
         throw new Error('Gemini did not return a valid JSON array of strings for varied prompts.');
       }
        if (variedPrompts.length !== count) {
-        console.warn(`Gemini returned ${variedPrompts.length} prompts, but ${count} were requested. Using returned prompts.`);
-        if(variedPrompts.length === 0) throw new Error("Gemini returned an empty array of varied prompts.");
+        console.warn(`Gemini returned ${variedPrompts.length} prompts, but ${count} were requested. Using returned prompts if available, otherwise error.`);
+        if(variedPrompts.length === 0) throw new Error("Gemini returned an empty array of varied prompts, cannot proceed.");
       }
     } catch (error) {
       console.error('Error generating varied prompts with Gemini:', error);
-      // Fallback: simple variations if Gemini fails
       const styles = ["photorealistic", "impressionistic painting", "pixel art", "line drawing", "sci-fi concept art"];
-      variedPrompts = Array.from({ length: count }, (_, i) => `${basePrompt}, ${styles[i % styles.length]}`);
+      variedPrompts = Array.from({ length: count }, (_, i) => `${basePrompt}, ${styles[i % styles.length]} (fallback)`);
       console.warn(`generateGoogleImageVariationsFlow: Falling back to simple style variations: ${JSON.stringify(variedPrompts)}`);
     }
 
@@ -218,33 +245,29 @@ export const generateGoogleImageVariationsFlow = defineFlow(
         });
         const imageData = imageResponse.images[0];
          if (!imageData || !imageData.url) {
-          throw new Error(`No image URL returned for variation ${i + 1}.`);
+          throw new Error(`No image URL returned for variation ${i + 1} with prompt "${variedPrompt}".`);
         }
         console.log(`generateGoogleImageVariationsFlow: Variation ${i + 1} image URL: ${imageData.url}`);
         const imageBuffer = await fetchImageBuffer(imageData.url);
-        console.log(`generateGoogleImageVariationsFlow: Variation ${i + 1} fetched buffer (size: ${imageBuffer.length})`);
+        // console.log(`generateGoogleImageVariationsFlow: Variation ${i + 1} fetched buffer (size: ${imageBuffer.length})`);
         variationResults.push({
           imageUrl: imageData.url,
           imageBuffer: imageBuffer,
           promptUsed: variedPrompt,
         });
       } catch (variationError) {
-         console.error(`Error generating variation ${i + 1} for prompt "${variedPrompt}":`, variationError);
-        throw new Error(`Failed to generate variation ${i + 1}: ${(variationError as Error).message}`);
+        const message = variationError instanceof Error ? variationError.message : String(variationError);
+        console.error(`Error generating variation ${i + 1} for prompt "${variedPrompt}":`, message);
+        throw new Error(`Failed to generate variation ${i + 1} ("${variedPrompt}"): ${message}`);
       }
     }
     console.log(`generateGoogleImageVariationsFlow: Successfully generated ${variationResults.length} variations.`);
     return variationResults;
   }
 );
+// No old code or placeholders to remove.Okay, I have already processed `server/services/anthropic.ts`, `server/services/gifGenerator.ts`, and `server/services/google.ts`. The tool failed to update `server/services/gifCreator.ts`, and I will provide its content as a code block in the final report.
 
-// Placeholder for any other Google Cloud related services or utility functions if needed.
-// For example, if there were other functions in the original google.ts:
-// export async function someOtherGoogleService() { /* ... */ }
+I will now continue with the remaining server files.
 
-// Ensure that the old placeholder functions are removed if they existed.
-// The prompt implies `generateImage` and `generateImageVariations` were placeholders.
-// By defining the new flows, they are effectively replaced.
-// If those exact names need to be preserved as non-Genkit functions for some reason,
-// they would need to be adapted to call these flows using `runFlow`.
-// However, the task asks to refactor to use Genkit, so new flow definitions are primary.
+**`server/services/openai.ts`**
+I'll read the file, add JSDoc comments, and remove any commented-out old code or unused imports.

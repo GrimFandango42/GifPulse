@@ -1,51 +1,74 @@
 import { Router, Request, Response } from 'express';
-import { generateGif, Provider } from './services/gifGenerator'; // Updated import
-import { storage } from './storage'; // Assuming storage is correctly set up
+import { generateGif, Provider } from './services/gifGenerator';
+import { storage } from './storage'; 
 import { GifGenerateRequestSchema, GifSearchResponseSchema, GifErrorResponseSchema } from '../shared/schema';
 import { fileTypeFromBuffer } from 'file-type';
 
+/**
+ * @file Defines API routes for GIF generation and search history.
+ */
+
 const router = Router();
 
-// GET /api/gif/searches - Retrieve past GIF searches
+/**
+ * @route GET /api/gif/searches
+ * @description Retrieves past GIF search queries and their results from storage.
+ * Each search result is augmented with an `isExisting: true` flag for client-side differentiation.
+ * @returns {Response} JSON array of past GIF searches or an error message.
+ */
 router.get('/api/gif/searches', async (req: Request, res: Response) => {
   try {
     const searches = await storage.getGifSearches();
-    // Validate searches against Zod schema if necessary, or assume storage returns correct type
-    res.json(searches.map(s => ({ ...s, isExisting: true }))); // Add isExisting for client
+    res.json(searches.map(s => ({ ...s, isExisting: true }))); 
   } catch (error) {
     console.error('Error fetching GIF searches:', error);
-    res.status(500).json({ error: 'Failed to fetch GIF searches' });
+    const errorResponse: GifErrorResponseSchema = { error: 'Failed to fetch GIF searches' };
+    res.status(500).json(errorResponse);
   }
 });
 
-// POST /api/gif/generate - Generate a new GIF
+/**
+ * @route POST /api/gif/generate
+ * @description Handles requests to generate a new GIF. It parses the request,
+ * calls the `generateGif` service, processes the resulting buffers into Base64 data URLs,
+ * saves the search to storage, and returns the GIF details to the client.
+ * @param {Request} req - The Express request object. Expected body should match `GifGenerateRequestSchema`.
+ * @param {Response} res - The Express response object.
+ * @returns {Response} JSON response containing the generated GIF's data URLs and metadata,
+ * or an error message.
+ */
 router.post('/api/gif/generate', async (req: Request, res: Response) => {
   console.log('Received /api/gif/generate request with body:', req.body);
   try {
     const parseResult = GifGenerateRequestSchema.safeParse(req.body);
     if (!parseResult.success) {
       console.error('Invalid request body:', parseResult.error.flatten());
-      return res.status(400).json({ error: 'Invalid request body', details: parseResult.error.flatten() });
+      const errorResponse: GifErrorResponseSchema = { 
+        error: 'Invalid request body', 
+        details: parseResult.error.flatten() 
+      };
+      return res.status(400).json(errorResponse);
     }
 
-    const { query, provider = 'auto', frameCount, gifOptions } = parseResult.data; // Assuming frameCount & gifOptions might be in request
+    // Extract validated data. frameCount and gifOptions will be undefined if not provided by client,
+    // allowing generateGif to use its defaults.
+    const { query, provider = 'auto', frameCount, gifOptions } = parseResult.data;
 
     console.log(`Generating GIF for query: "${query}", provider: "${provider}"`);
 
-    // Call the updated generateGif function
     const generationResult = await generateGif(
         query, 
-        provider as Provider, 
-        frameCount, // Pass frameCount if provided, otherwise generateGif uses its default
-        gifOptions  // Pass gifOptions if provided
+        provider as Provider, // Type assertion as schema might allow 'auto' string
+        frameCount, 
+        gifOptions  
     );
 
-    const { gifBuffer, thumbnailBuffer, provider: actualProvider, originalPrompt, generatedPrompts, imageUrls } = generationResult;
+    // Unused variables from generationResult (generatedPrompts, imageUrls) are intentionally not destructured
+    // to avoid "unused variable" linting issues if they are not part of the final response or extended logging.
+    const { gifBuffer, thumbnailBuffer, provider: actualProvider, originalPrompt } = generationResult;
 
-    // Convert gifBuffer to Base64 data URL
     const gifDataUrl = `data:image/gif;base64,${gifBuffer.toString('base64')}`;
 
-    // Determine thumbnail MIME type and convert thumbnailBuffer to Base64 data URL
     let thumbnailMimeType = 'image/png'; // Default MIME type
     try {
       const fileTypeResult = await fileTypeFromBuffer(thumbnailBuffer);
@@ -61,38 +84,29 @@ router.post('/api/gif/generate', async (req: Request, res: Response) => {
     }
     const thumbnailDataUrl = `data:${thumbnailMimeType};base64,${thumbnailBuffer.toString('base64')}`;
 
-    // Save to database (using Base64 data URLs)
-    // Note: Storing large Base64 strings in DB is generally not recommended for performance.
-    // In a production scenario, you'd store files in a blob store and save their URLs.
     try {
       await storage.createGifSearch({
         query: originalPrompt,
         provider: actualProvider,
-        gifUrl: gifDataUrl, // Storing data URL
-        thumbnailUrl: thumbnailDataUrl, // Storing data URL
-        // `generatedPrompts` and `imageUrls` from frames could be stored if schema supports it,
-        // e.g., in a JSONB column or separate table. For now, not storing them.
+        gifUrl: gifDataUrl, 
+        thumbnailUrl: thumbnailDataUrl, 
       });
       console.log(`GIF search for "${originalPrompt}" (provider: ${actualProvider}) saved to database.`);
     } catch (dbError) {
       console.error('Error saving GIF search to database:', dbError);
-      // Decide if this should be a critical error for the client.
-      // For now, we'll still return the GIF even if DB save fails.
+      // Non-critical for client, log and continue.
     }
     
     const responsePayload: GifSearchResponseSchema = {
-      id: -1, // ID will be assigned by DB, not immediately available here unless createGifSearch returns it
+      // Assuming id is auto-generated by DB and not immediately needed for this response.
+      // If createGifSearch returned the new object with id, it could be used here.
+      id: Date.now(), // Using timestamp as a temporary unique_ish id for client if needed
       query: originalPrompt,
       provider: actualProvider,
       gifUrl: gifDataUrl,
       thumbnailUrl: thumbnailDataUrl,
-      createdAt: new Date().toISOString(), // Or use DB timestamp if available
+      createdAt: new Date().toISOString(), 
       isExisting: false,
-      // Optional: include debug info if desired by client
-      // debugInfo: {
-      //   generatedPrompts,
-      //   sourceImageUrls: imageUrls,
-      // }
     };
 
     console.log(`Successfully generated GIF for prompt: "${originalPrompt}". Returning data URLs.`);
@@ -101,18 +115,22 @@ router.post('/api/gif/generate', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error generating GIF:', error);
     const message = error instanceof Error ? error.message : 'An unknown error occurred during GIF generation.';
-    // Ensure the error response schema is adhered to
     const errorResponse: GifErrorResponseSchema = { error: message };
-    if (error instanceof Error && error.stack) {
-        // errorResponse.details = error.stack; // Optional: include stack in dev, not prod
-    }
+    // Avoid sending stack traces in production responses
+    // if (process.env.NODE_ENV === 'development' && error instanceof Error && error.stack) {
+    //     errorResponse.details = { stack: error.stack };
+    // }
     res.status(500).json(errorResponse);
   }
 });
 
-// Fallback for 404s
-router.use((req, res) => {
-  res.status(404).json({ error: 'Not Found' });
+/**
+ * @description Fallback middleware for handling 404 Not Found errors.
+ * This should be the last middleware added to the router.
+ */
+router.use((req: Request, res: Response) => {
+  const errorResponse: GifErrorResponseSchema = { error: 'Not Found' };
+  res.status(404).json(errorResponse);
 });
 
 export default router;
