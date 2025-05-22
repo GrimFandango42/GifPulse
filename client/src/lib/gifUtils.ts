@@ -2,7 +2,7 @@
  * Utility functions for GIF handling
  */
 
-// Convert blob URL to base64 for sending to server
+// Convert blob URL to base64 for sending to server (if needed for other features)
 export async function blobUrlToBase64(url: string): Promise<string> {
   const response = await fetch(url);
   const blob = await response.blob();
@@ -24,8 +24,12 @@ export async function blobUrlToBase64(url: string): Promise<string> {
 }
 
 // Get file size in human-readable format
-export function getFileSize(base64: string): string {
-  const sizeInBytes = Math.ceil((base64.length * 3) / 4);
+export function getFileSize(base64OrDataUrl: string): string {
+  let actualBase64 = base64OrDataUrl;
+  if (base64OrDataUrl.startsWith('data:')) {
+    actualBase64 = base64OrDataUrl.split(',')[1];
+  }
+  const sizeInBytes = Math.ceil((actualBase64.length * 3) / 4); // Base64 string length to bytes
   
   if (sizeInBytes < 1024) {
     return `${sizeInBytes} B`;
@@ -37,19 +41,18 @@ export function getFileSize(base64: string): string {
 }
 
 // Check if GIF file size is within limits
-export function isGifSizeValid(base64: string, maxSizeMB: number = 5): boolean {
-  const sizeInBytes = Math.ceil((base64.length * 3) / 4);
+export function isGifSizeValid(base64OrDataUrl: string, maxSizeMB: number = 5): boolean {
+  let actualBase64 = base64OrDataUrl;
+  if (base64OrDataUrl.startsWith('data:')) {
+    actualBase64 = base64OrDataUrl.split(',')[1];
+  }
+  const sizeInBytes = Math.ceil((actualBase64.length * 3) / 4);
   const sizeInMB = sizeInBytes / (1024 * 1024);
   
   return sizeInMB <= maxSizeMB;
 }
 
-// Generate a thumbnail from a GIF (simplified - in practice would need canvas/video processing)
-export function generateThumbnail(gifUrl: string): Promise<string> {
-  // In a real implementation, this would extract the first frame of the GIF
-  // For now, we'll just return the original URL
-  return Promise.resolve(gifUrl);
-}
+// Removed generateThumbnail function as server now provides thumbnail URLs
 
 // Format provider names for display
 export function formatProviderName(provider: string): string {

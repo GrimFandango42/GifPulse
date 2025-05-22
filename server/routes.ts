@@ -1,178 +1,118 @@
-import type { Express, Request, Response } from "express";
-import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { z } from "zod";
-import { insertGifSearchSchema, type InsertUserSettings } from "@shared/schema";
-import { generateGif } from "./services/gifGenerator";
+import { Router, Request, Response } from 'express';
+import { generateGif, Provider } from './services/gifGenerator'; // Updated import
+import { storage } from './storage'; // Assuming storage is correctly set up
+import { GifGenerateRequestSchema, GifSearchResponseSchema, GifErrorResponseSchema } from '../shared/schema';
+import { fileTypeFromBuffer } from 'file-type';
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  // API Routes
+const router = Router();
 
-  // Get recent GIF searches
-  app.get('/api/gif/recent', async (req: Request, res: Response) => {
-    try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
-      const recentSearches = await storage.getRecentSearches(limit);
-      
-      res.json({
-        items: recentSearches
-      });
-    } catch (error) {
-      console.error('Error fetching recent GIF searches:', error);
-      res.status(500).json({ message: 'Failed to fetch recent GIF searches' });
+// GET /api/gif/searches - Retrieve past GIF searches
+router.get('/api/gif/searches', async (req: Request, res: Response) => {
+  try {
+    const searches = await storage.getGifSearches();
+    // Validate searches against Zod schema if necessary, or assume storage returns correct type
+    res.json(searches.map(s => ({ ...s, isExisting: true }))); // Add isExisting for client
+  } catch (error) {
+    console.error('Error fetching GIF searches:', error);
+    res.status(500).json({ error: 'Failed to fetch GIF searches' });
+  }
+});
+
+// POST /api/gif/generate - Generate a new GIF
+router.post('/api/gif/generate', async (req: Request, res: Response) => {
+  console.log('Received /api/gif/generate request with body:', req.body);
+  try {
+    const parseResult = GifGenerateRequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      console.error('Invalid request body:', parseResult.error.flatten());
+      return res.status(400).json({ error: 'Invalid request body', details: parseResult.error.flatten() });
     }
-  });
 
-  // Get popular GIF searches
-  app.get('/api/gif/popular', async (req: Request, res: Response) => {
+    const { query, provider = 'auto', frameCount, gifOptions } = parseResult.data; // Assuming frameCount & gifOptions might be in request
+
+    console.log(`Generating GIF for query: "${query}", provider: "${provider}"`);
+
+    // Call the updated generateGif function
+    const generationResult = await generateGif(
+        query, 
+        provider as Provider, 
+        frameCount, // Pass frameCount if provided, otherwise generateGif uses its default
+        gifOptions  // Pass gifOptions if provided
+    );
+
+    const { gifBuffer, thumbnailBuffer, provider: actualProvider, originalPrompt, generatedPrompts, imageUrls } = generationResult;
+
+    // Convert gifBuffer to Base64 data URL
+    const gifDataUrl = `data:image/gif;base64,${gifBuffer.toString('base64')}`;
+
+    // Determine thumbnail MIME type and convert thumbnailBuffer to Base64 data URL
+    let thumbnailMimeType = 'image/png'; // Default MIME type
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
-      const popularSearches = await storage.getPopularSearches(limit);
-      
-      res.json({
-        items: popularSearches
-      });
+      const fileTypeResult = await fileTypeFromBuffer(thumbnailBuffer);
+      if (fileTypeResult) {
+        thumbnailMimeType = fileTypeResult.mime;
+        console.log(`Detected thumbnail MIME type: ${thumbnailMimeType}`);
+      } else {
+        console.warn('Could not detect thumbnail MIME type, defaulting to image/png.');
+      }
     } catch (error) {
-      console.error('Error fetching popular GIF searches:', error);
-      res.status(500).json({ message: 'Failed to fetch popular GIF searches' });
+      console.error('Error detecting thumbnail MIME type:', error);
+      console.warn('Proceeding with default image/png for thumbnail.');
     }
-  });
+    const thumbnailDataUrl = `data:${thumbnailMimeType};base64,${thumbnailBuffer.toString('base64')}`;
 
-  // Generate a GIF
-  app.post('/api/gif/generate', async (req: Request, res: Response) => {
+    // Save to database (using Base64 data URLs)
+    // Note: Storing large Base64 strings in DB is generally not recommended for performance.
+    // In a production scenario, you'd store files in a blob store and save their URLs.
     try {
-      // Validate request body
-      const schema = z.object({
-        query: z.string().min(1).max(100),
-        provider: z.enum(['auto', 'openai', 'google', 'anthropic'])
+      await storage.createGifSearch({
+        query: originalPrompt,
+        provider: actualProvider,
+        gifUrl: gifDataUrl, // Storing data URL
+        thumbnailUrl: thumbnailDataUrl, // Storing data URL
+        // `generatedPrompts` and `imageUrls` from frames could be stored if schema supports it,
+        // e.g., in a JSONB column or separate table. For now, not storing them.
       });
-      
-      const validationResult = schema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({ 
-          message: 'Invalid request body', 
-          errors: validationResult.error.format() 
-        });
-      }
-      
-      const { query, provider } = validationResult.data;
-      
-      // Check if GIF already exists for this query
-      const existingSearch = await storage.getGifSearchByQuery(query);
-      if (existingSearch) {
-        // Increment search count
-        await storage.incrementSearchCount(existingSearch.id);
-        
-        // Return existing GIF
-        return res.json({
-          gifUrl: existingSearch.gifUrl,
-          thumbnailUrl: existingSearch.thumbnailUrl,
-          query: existingSearch.query,
-          provider: existingSearch.provider,
-          isExisting: true,
-          variations: [] // No variations for existing GIFs
-        });
-      }
-      
-      // Generate a new GIF
-      const { gifUrl, thumbnailUrl, variations } = await generateGif(query, provider);
-      
-      // Store the new GIF search
-      const newSearch = await storage.createGifSearch({
-        query,
-        gifUrl,
-        thumbnailUrl,
-        provider,
-        userId: 1 // Default user ID
-      });
-      
-      res.json({
-        gifUrl: newSearch.gifUrl,
-        thumbnailUrl: newSearch.thumbnailUrl,
-        query: newSearch.query,
-        provider: newSearch.provider,
-        isExisting: false,
-        variations
-      });
-    } catch (error) {
-      console.error('Error generating GIF:', error);
-      res.status(500).json({ message: 'Failed to generate GIF' });
+      console.log(`GIF search for "${originalPrompt}" (provider: ${actualProvider}) saved to database.`);
+    } catch (dbError) {
+      console.error('Error saving GIF search to database:', dbError);
+      // Decide if this should be a critical error for the client.
+      // For now, we'll still return the GIF even if DB save fails.
     }
-  });
+    
+    const responsePayload: GifSearchResponseSchema = {
+      id: -1, // ID will be assigned by DB, not immediately available here unless createGifSearch returns it
+      query: originalPrompt,
+      provider: actualProvider,
+      gifUrl: gifDataUrl,
+      thumbnailUrl: thumbnailDataUrl,
+      createdAt: new Date().toISOString(), // Or use DB timestamp if available
+      isExisting: false,
+      // Optional: include debug info if desired by client
+      // debugInfo: {
+      //   generatedPrompts,
+      //   sourceImageUrls: imageUrls,
+      // }
+    };
 
-  // Get user settings
-  app.get('/api/settings', async (req: Request, res: Response) => {
-    try {
-      // Using default user ID 1
-      const userId = 1;
-      
-      const settings = await storage.getUserSettings(userId);
-      if (!settings) {
-        return res.status(404).json({ message: 'Settings not found' });
-      }
-      
-      res.json(settings);
-    } catch (error) {
-      console.error('Error fetching user settings:', error);
-      res.status(500).json({ message: 'Failed to fetch user settings' });
+    console.log(`Successfully generated GIF for prompt: "${originalPrompt}". Returning data URLs.`);
+    res.status(201).json(responsePayload);
+
+  } catch (error) {
+    console.error('Error generating GIF:', error);
+    const message = error instanceof Error ? error.message : 'An unknown error occurred during GIF generation.';
+    // Ensure the error response schema is adhered to
+    const errorResponse: GifErrorResponseSchema = { error: message };
+    if (error instanceof Error && error.stack) {
+        // errorResponse.details = error.stack; // Optional: include stack in dev, not prod
     }
-  });
+    res.status(500).json(errorResponse);
+  }
+});
 
-  // Update user settings
-  app.post('/api/settings', async (req: Request, res: Response) => {
-    try {
-      // Validate request body
-      const schema = z.object({
-        defaultProvider: z.enum(['auto', 'openai', 'google', 'anthropic']).optional(),
-        autoCheckUpdates: z.boolean().optional(),
-        gifDuration: z.string().or(z.number()).optional(),
-        gifQuality: z.enum(['high', 'medium', 'low']).optional(),
-        saveHistory: z.boolean().optional()
-      });
-      
-      const validationResult = schema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({ 
-          message: 'Invalid request body', 
-          errors: validationResult.error.format() 
-        });
-      }
-      
-      // Using default user ID 1
-      const userId = 1;
-      
-      // Create a properly typed updates object
-      const { defaultProvider, autoCheckUpdates, saveHistory, gifQuality } = validationResult.data;
-      
-      // Handle the gifDuration specifically to ensure it's a number
-      let gifDuration: number | undefined = undefined;
-      if (validationResult.data.gifDuration !== undefined) {
-        gifDuration = typeof validationResult.data.gifDuration === 'string' 
-          ? parseInt(validationResult.data.gifDuration) 
-          : validationResult.data.gifDuration;
-      }
-      
-      const updates: Partial<InsertUserSettings> = {
-        defaultProvider,
-        autoCheckUpdates,
-        gifDuration,
-        gifQuality,
-        saveHistory
-      };
-      
-      const settings = await storage.updateUserSettings(userId, updates);
-      if (!settings) {
-        return res.status(404).json({ message: 'Settings not found' });
-      }
-      
-      res.json(settings);
-    } catch (error) {
-      console.error('Error updating user settings:', error);
-      res.status(500).json({ message: 'Failed to update user settings' });
-    }
-  });
+// Fallback for 404s
+router.use((req, res) => {
+  res.status(404).json({ error: 'Not Found' });
+});
 
-  const httpServer = createServer(app);
-  
-  return httpServer;
-}
+export default router;

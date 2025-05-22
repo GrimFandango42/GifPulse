@@ -1,165 +1,128 @@
-import * as openai from "./openai";
-import * as google from "./google";
-import * as anthropic from "./anthropic";
-import { createGifFromImages } from "./gifCreator";
+import {
+  generateGoogleAnimationFramesFlow,
+  // generateGoogleImageFlow, // Available if single image GIF is an option
+} from './google';
+import {
+  generateOpenAIAnimationFramesFlow,
+  // generateOpenAIImageFlow,
+} from './openai';
+import {
+  generateAnthropicAnimationFramesFlow,
+  // generateAnthropicImageFlow,
+} from './anthropic';
+import { createGifFromImageBuffers, GifOptions } from './gifCreator'; // Assuming createGifFromImageBuffers is exported
+import { loadImage } from 'canvas'; // For reading dimensions from buffer
+import * as z from 'zod'; // For potential schema validation if needed, though flows handle their own.
 
-// Type for AI provider
-type Provider = "auto" | "openai" | "google" | "anthropic";
+export type Provider = "auto" | "openai" | "google" | "anthropic";
 
-/**
- * Generate a GIF based on a text prompt
- * @param prompt The text prompt to generate a GIF from
- * @param provider The AI provider to use
- * @returns Object containing the GIF URL, thumbnail URL, and variations
- */
+export interface GenerateGifResult {
+  gifBuffer: Buffer;
+  thumbnailBuffer: Buffer;
+  provider: Provider;
+  originalPrompt: string;
+  generatedPrompts?: string[]; // Optional: To store prompts used for each frame
+  imageUrls?: string[]; // Optional: To store URLs of generated frames
+}
+
+const DEFAULT_FRAME_COUNT = 4; // Default number of frames for animation flows
+const DEFAULT_GIF_OPTIONS: GifOptions = {
+  delay: 200, // ms
+  quality: 10, // 1-30 (lower is better)
+  repeat: 0,   // 0 for loop indefinitely
+};
+
 export async function generateGif(
   prompt: string,
-  provider: Provider = "auto"
-): Promise<{
-  gifUrl: string;
-  thumbnailUrl: string;
-  variations: string[];
-  animationFrames?: string[]; // Added for client-side animation
-}> {
-  try {
-    console.log(`Generating GIF with prompt: "${prompt}" using provider: ${provider}`);
-    
-    // Choose the provider based on the input or auto-select
-    if (provider === "auto") {
-      // For now, we'll prefer OpenAI as it has the best image quality
-      // In a production app, we could have logic to select the best provider based on the prompt
-      provider = "openai";
-      console.log(`Auto-selected provider: ${provider}`);
-    }
-    
-    // Step 1: Generate animation frames based on the prompt
-    let frameUrls: string[] = [];
-    let variations: string[] = [];
-    
-    // Generate frames using the selected provider
-    switch (provider) {
-      case "openai":
-        try {
-          // Try to generate proper animation frames
-          frameUrls = await openai.generateAnimationFrames(prompt, 5);
-          
-          // Get variations as well
-          variations = await openai.generateImageVariations(prompt, 3);
-        } catch (error) {
-          console.error("Error generating animation frames:", error);
-          
-          // Fallback: Just get a single image and use it as the GIF
-          const singleImage = await openai.generateImage(prompt);
-          frameUrls = [singleImage];
-          
-          // Try to get variations
-          try {
-            variations = await openai.generateImageVariations(prompt, 3);
-          } catch (variationError) {
-            console.error("Error generating variations:", variationError);
-            variations = [singleImage];
-          }
-        }
-        break;
-        
-      case "google":
-        // Google doesn't support animation frames yet, so we'll just use their static image
-        const googleImage = await google.generateImage(prompt);
-        frameUrls = [googleImage];
-        variations = await google.generateImageVariations(prompt, 3);
-        break;
-        
-      case "anthropic":
-        // Anthropic doesn't support animation frames yet, so we'll just use their static image
-        const anthropicImage = await anthropic.generateImage(prompt);
-        frameUrls = [anthropicImage];
-        variations = await anthropic.generateImageVariations(prompt, 3);
-        break;
-        
-      default:
-        throw new Error(`Unknown provider: ${provider}`);
-    }
-    
-    // Step 2: Create animated GIF if we have multiple frames
-    let gifUrl: string;
-    
-    if (frameUrls.length > 1) {
-      // Create an actual animated GIF from the frames
-      try {
-        gifUrl = await createGifFromImages(frameUrls, {
-          width: 512,
-          height: 512,
-          delay: 200, // 200ms between frames (5 FPS)
-          quality: 10,
-          repeat: 0 // Loop forever
-        });
-        console.log("Successfully created animated GIF from frames");
-      } catch (gifError) {
-        console.error("Error creating animated GIF:", gifError);
-        // Fallback to just using the first frame
-        gifUrl = frameUrls[0];
-      }
-    } else if (frameUrls.length === 1) {
-      // Just use the single frame
-      gifUrl = frameUrls[0];
-    } else {
-      throw new Error("No images were generated for the GIF");
-    }
-    
-    // Use the first frame as the thumbnail
-    const thumbnailUrl = frameUrls[0];
-    
-    console.log(`Generated GIF for prompt: "${prompt}"`);
-    
-    return {
-      gifUrl,
-      thumbnailUrl,
-      variations,
-      animationFrames: frameUrls.length > 1 ? frameUrls : undefined
-    };
-  } catch (error) {
-    console.error("Error generating GIF:", error);
-    throw new Error(`GIF generation failed: ${error}`);
+  provider: Provider = "auto",
+  frameCount: number = DEFAULT_FRAME_COUNT, // Allow overriding frame count
+  gifOptions: GifOptions = DEFAULT_GIF_OPTIONS
+): Promise<GenerateGifResult> {
+  if (!prompt) {
+    throw new Error("Prompt cannot be empty.");
   }
+
+  let actualProvider = provider;
+  if (provider === "auto") {
+    actualProvider = "google"; // Default to Google if "auto"
+    console.log(`generateGif: "auto" provider selected, defaulting to ${actualProvider}.`);
+  }
+
+  console.log(`generateGif: Generating GIF for prompt "${prompt}" using ${actualProvider}, ${frameCount} frames.`);
+
+  let frameGenerationResult: Array<{ imageUrl: string; imageBuffer: Buffer; promptUsed: string; }> = [];
+
+  try {
+    switch (actualProvider) {
+      case "google":
+        frameGenerationResult = await generateGoogleAnimationFramesFlow.run({ basePrompt: prompt, frameCount });
+        break;
+      case "openai":
+        frameGenerationResult = await generateOpenAIAnimationFramesFlow.run({ basePrompt: prompt, frameCount });
+        break;
+      case "anthropic":
+        // Anthropic flow returns mock image buffers but real generated prompts
+        frameGenerationResult = await generateAnthropicAnimationFramesFlow.run({ basePrompt: prompt, frameCount });
+        break;
+      default:
+        throw new Error(`Unsupported provider: ${actualProvider}`);
+    }
+  } catch (error) {
+    console.error(`generateGif: Error calling Genkit flow for provider ${actualProvider}:`, error);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate frames with ${actualProvider}: ${message}`);
+  }
+
+  if (!frameGenerationResult || frameGenerationResult.length === 0) {
+    throw new Error(`No frames were generated by ${actualProvider}. Cannot create GIF.`);
+  }
+  console.log(`generateGif: Successfully generated ${frameGenerationResult.length} frames from ${actualProvider}.`);
+
+  const imageBuffers = frameGenerationResult.map(frame => frame.imageBuffer);
+  const generatedPrompts = frameGenerationResult.map(frame => frame.promptUsed);
+  const imageUrls = frameGenerationResult.map(frame => frame.imageUrl);
+
+  // Determine width and height from the first image buffer
+  let width: number;
+  let height: number;
+  try {
+    const firstImage = await loadImage(imageBuffers[0]); // loadImage from 'canvas'
+    width = firstImage.width;
+    height = firstImage.height;
+    if (width <= 0 || height <= 0) {
+        throw new Error(`Invalid dimensions (${width}x${height}) from first frame.`);
+    }
+    console.log(`generateGif: Determined GIF dimensions from first frame: ${width}x${height}`);
+  } catch (error) {
+    console.error("generateGif: Error loading first image buffer to determine dimensions:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read dimensions from the first generated frame: ${message}`);
+  }
+
+  let gifBuffer: Buffer;
+  try {
+    gifBuffer = await createGifFromImageBuffers(imageBuffers, width, height, gifOptions);
+    console.log(`generateGif: GIF created successfully (size: ${gifBuffer.length} bytes).`);
+  } catch (error) {
+    console.error("generateGif: Error creating GIF from image buffers:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to create GIF: ${message}`);
+  }
+
+  const thumbnailBuffer = imageBuffers[0]; // Use the first frame as the thumbnail
+
+  return {
+    gifBuffer,
+    thumbnailBuffer,
+    provider: actualProvider,
+    originalPrompt: prompt,
+    generatedPrompts, // Include the prompts used for each frame
+    imageUrls,        // Include the URLs for each frame
+  };
 }
 
-/**
- * Check if the AI providers need to be updated
- * In a real implementation, this would check for new models or API changes
- */
-export async function checkForProviderUpdates(): Promise<{
-  updates: boolean;
-  providers: {
-    name: string;
-    status: "up-to-date" | "update-available" | "deprecated";
-    latestVersion?: string;
-  }[];
-}> {
-  try {
-    // In a real implementation, this would check with the providers' APIs
-    // For this demo, we'll return mock data
-    return {
-      updates: false,
-      providers: [
-        {
-          name: "OpenAI DALL-E",
-          status: "up-to-date",
-          latestVersion: "3.0"
-        },
-        {
-          name: "Google Imagen",
-          status: "up-to-date",
-          latestVersion: "2.0"
-        },
-        {
-          name: "Anthropic Claude",
-          status: "up-to-date",
-          latestVersion: "2.1"
-        }
-      ]
-    };
-  } catch (error) {
-    console.error("Error checking for provider updates:", error);
-    throw new Error(`Provider update check failed: ${error}`);
-  }
-}
+// Example of a more specific GIF generation function if needed in the future
+// export async function generateSpecificAnimation(prompt: string): Promise<GenerateGifResult> {
+//   // Could call generateGif with specific parameters or have slightly different logic
+//   return generateGif(prompt, "openai", 5, { delay: 150, quality: 10 });
+// }
