@@ -1,241 +1,211 @@
-import { 
-  users, 
-  type User, 
-  type InsertUser,
-  gifSearches,
-  type GifSearch,
-  type InsertGifSearch,
-  userSettings,
-  type UserSettings,
-  type InsertUserSettings
-} from "@shared/schema";
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Client } from 'pg';
+import { eq, desc, sql } from 'drizzle-orm';
+import * as schema from '../shared/schema'; // Updated import path
+import type {
+  // User, // Will use schema.User
+  // UserSetting, // Will use schema.UserSettings
+  // GifSearch, // Will use schema.GifSearch
+  IStorage,
+  // UserWithSettings as IUserWithSettings, // Will define locally
+} from '../shared/types'; // Assuming shared/types.ts has IStorage
+import dotenv from 'dotenv';
+import logger from './lib/logger'; // Import pino logger
 
-export interface IStorage {
-  // User methods
-  getUser(id: number): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  
-  // Gif Search methods
-  getRecentSearches(limit?: number): Promise<GifSearch[]>;
-  getPopularSearches(limit?: number): Promise<GifSearch[]>;
-  createGifSearch(search: InsertGifSearch): Promise<GifSearch>;
-  getGifSearchByQuery(query: string): Promise<GifSearch | undefined>;
-  incrementSearchCount(id: number): Promise<void>;
-  
-  // User Settings methods
-  getUserSettings(userId: number): Promise<UserSettings | undefined>;
-  createUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
-  updateUserSettings(userId: number, settings: Partial<InsertUserSettings>): Promise<UserSettings | undefined>;
-}
+dotenv.config();
 
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private gifSearches: Map<number, GifSearch>;
-  private userSettings: Map<number, UserSettings>;
-  private userId: number;
-  private gifSearchId: number;
-  private userSettingsId: number;
+// Define UserWithSettings locally based on shared/schema.ts
+type UserWithSettings = schema.User & {
+  settings: schema.UserSettings | null;
+};
 
-  constructor() {
-    this.users = new Map();
-    this.gifSearches = new Map();
-    this.userSettings = new Map();
-    this.userId = 1;
-    this.gifSearchId = 1;
-    this.userSettingsId = 1;
-    
-    // Add demo user
-    this.createUser({
-      username: "demo",
-      password: "password"
-    });
-    
-    // Add some initial GIF searches
-    this.createGifSearch({
-      query: "Bear down packer cheese!",
-      gifUrl: "https://media3.giphy.com/media/KzDqC8LvVC4lshCcGK/giphy.gif",
-      thumbnailUrl: "https://media3.giphy.com/media/KzDqC8LvVC4lshCcGK/100_s.gif",
-      provider: "auto",
-      userId: 1
-    });
-    
-    this.createGifSearch({
-      query: "Feeling hawt!",
-      gifUrl: "https://media3.giphy.com/media/3o7TKEP6YngkCKFofC/giphy.gif",
-      thumbnailUrl: "https://media3.giphy.com/media/3o7TKEP6YngkCKFofC/100_s.gif",
-      provider: "openai",
-      userId: 1
-    });
-    
-    this.createGifSearch({
-      query: "You suck!",
-      gifUrl: "https://media2.giphy.com/media/TL2Yr3ioe78tO/giphy.gif",
-      thumbnailUrl: "https://media2.giphy.com/media/TL2Yr3ioe78tO/100_s.gif",
-      provider: "google",
-      userId: 1
-    });
-    
-    this.createGifSearch({
-      query: "sadface",
-      gifUrl: "https://media1.giphy.com/media/OPU6wzx8JrHna/giphy.gif",
-      thumbnailUrl: "https://media1.giphy.com/media/OPU6wzx8JrHna/100_s.gif",
-      provider: "anthropic",
-      userId: 1
-    });
-    
-    // Add some popular GIF searches
-    this.createGifSearch({
-      query: "Party time!",
-      gifUrl: "https://media2.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif",
-      thumbnailUrl: "https://media2.giphy.com/media/l0MYt5jPR6QX5pnqM/100_s.gif",
-      provider: "auto",
-      userId: 1
-    });
-    
-    this.gifSearches.get(5)!.searchCount = 15;
-    
-    this.createGifSearch({
-      query: "OMG what?!",
-      gifUrl: "https://media4.giphy.com/media/3o7527pa7qs9kCG78A/giphy.gif",
-      thumbnailUrl: "https://media4.giphy.com/media/3o7527pa7qs9kCG78A/100_s.gif",
-      provider: "openai",
-      userId: 1
-    });
-    
-    this.gifSearches.get(6)!.searchCount = 12;
-    
-    this.createGifSearch({
-      query: "Mondays be like",
-      gifUrl: "https://media4.giphy.com/media/14aUO0Mf7dWDXW/giphy.gif",
-      thumbnailUrl: "https://media4.giphy.com/media/14aUO0Mf7dWDXW/100_s.gif",
-      provider: "google",
-      userId: 1
-    });
-    
-    this.gifSearches.get(7)!.searchCount = 10;
-    
-    this.createGifSearch({
-      query: "Cute cat vibes",
-      gifUrl: "https://media0.giphy.com/media/BzyTuYCmvSORqs1ABM/giphy.gif",
-      thumbnailUrl: "https://media0.giphy.com/media/BzyTuYCmvSORqs1ABM/100_s.gif",
-      provider: "anthropic",
-      userId: 1
-    });
-    
-    this.gifSearches.get(8)!.searchCount = 8;
-    
-    // Add default user settings
-    this.createUserSettings({
-      userId: 1,
-      defaultProvider: "auto",
-      autoCheckUpdates: true,
-      gifDuration: 5,
-      gifQuality: "high",
-      saveHistory: true,
-      apiKeys: {}
-    });
-  }
+const client = new Client({
+  connectionString: process.env.DATABASE_URL,
+});
 
-  // User methods
-  async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
-  }
+client.connect().catch(err => {
+  logger.error({ err }, 'Failed to connect to the database in storage.ts');
+});
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
+const db = drizzle(schema, { client });
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userId++;
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
-  }
-  
-  // Gif Search methods
-  async getRecentSearches(limit: number = 10): Promise<GifSearch[]> {
-    return Array.from(this.gifSearches.values())
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, limit);
-  }
-  
-  async getPopularSearches(limit: number = 10): Promise<GifSearch[]> {
-    return Array.from(this.gifSearches.values())
-      .sort((a, b) => b.searchCount - a.searchCount)
-      .slice(0, limit);
-  }
-  
-  async createGifSearch(insertSearch: InsertGifSearch): Promise<GifSearch> {
-    const id = this.gifSearchId++;
-    const now = new Date();
-    const search: GifSearch = { 
-      ...insertSearch, 
-      id, 
-      searchCount: 1, 
-      createdAt: now,
-      userId: insertSearch.userId || null
+export class DrizzleStorage implements IStorage {
+  async getUser(userId: number): Promise<UserWithSettings | null> {
+    const result = await db.query.users.findFirst({
+      where: eq(schema.users.id, userId),
+      with: {
+        settings: { // Assuming 'settings' is the relation name in Drizzle for userSettings
+          // Drizzle will fetch userSettings based on the relation defined with users table
+        },
+      },
+    });
+    if (!result) return null;
+    // Manually query settings if 'with' doesn't work as expected or relation is not set up in shared/schema for Drizzle query
+    const settings = await db.query.userSettings.findFirst({
+        where: eq(schema.userSettings.userId, userId),
+    });
+
+    return {
+      id: result.id,
+      username: result.username,
+      password: result.password, // Changed from passwordHash
+      // createdAt is not in shared/schema.ts for users table.
+      settings: settings || null,
     };
-    this.gifSearches.set(id, search);
-    return search;
   }
-  
-  async getGifSearchByQuery(query: string): Promise<GifSearch | undefined> {
-    return Array.from(this.gifSearches.values()).find(
-      (search) => search.query.toLowerCase() === query.toLowerCase(),
-    );
+
+  async getUserByUsername(username: string): Promise<UserWithSettings | null> {
+    const result = await db.query.users.findFirst({
+      where: eq(schema.users.username, username),
+    });
+    if (!result) return null;
+
+    const settings = await db.query.userSettings.findFirst({
+        where: eq(schema.userSettings.userId, result.id),
+    });
+    
+    return {
+      id: result.id,
+      username: result.username,
+      password: result.password, // Changed from passwordHash
+      settings: settings || null,
+    };
   }
-  
-  async incrementSearchCount(id: number): Promise<void> {
-    const search = this.gifSearches.get(id);
-    if (search) {
-      search.searchCount += 1;
-      this.gifSearches.set(id, search);
+
+  // IStorage expects Omit<User, 'id' | 'createdAt'>. schema.InsertUser is { username, password }
+  // User in shared/types.ts likely has id, username, password, createdAt.
+  // User in shared/schema.ts has id, username, password.
+  async createUser(user: schema.InsertUser): Promise<schema.User> {
+    const [newUser] = await db
+      .insert(schema.users)
+      .values(user)
+      .returning();
+    
+    // Create default settings for the user using schema.InsertUserSettings
+    // schema.InsertUserSettings requires userId.
+    // The defaultProvider, autoCheckUpdates etc. have defaults in shared/schema.ts
+    await this.createUserSettings({ 
+        userId: newUser.id,
+        // Let's rely on DB defaults for other fields in userSettings
+        defaultProvider: 'auto', // Example, or let DB default work
+        autoCheckUpdates: true,
+        gifDuration: 5,
+        gifQuality: 'high',
+        saveHistory: true,
+        // apiKeys can be omitted if it's nullable or has a DB default / not required by InsertUserSettings
+    } as schema.InsertUserSettings); // Cast to ensure type alignment if some props are optional in InsertUserSettings
+    return newUser;
+  }
+
+  async getRecentSearches(
+    userId: number,
+    limit: number,
+  ): Promise<schema.GifSearch[]> {
+    const results = await db
+      .select()
+      .from(schema.gifSearches)
+      .where(eq(schema.gifSearches.userId, userId))
+      .orderBy(desc(schema.gifSearches.createdAt))
+      .limit(limit);
+    return results;
+  }
+
+  async getPopularSearches(limit: number): Promise<schema.GifSearch[]> {
+    return db
+      .select()
+      .from(schema.gifSearches)
+      .orderBy(desc(schema.gifSearches.searchCount))
+      .limit(limit);
+  }
+
+  // IStorage expects: search: Omit<GifSearch, 'id' | 'searchCount' | 'createdAt' | 'updatedAt'>, userId: number
+  // schema.InsertGifSearch is { query, gifUrl, thumbnailUrl, provider, userId }
+  // This means the caller of DrizzleStorage.createGifSearch must provide an object that includes userId.
+  async createGifSearch(
+    search: schema.InsertGifSearch, 
+    // userId: number, // userId is now part of 'search' object for InsertGifSearch
+  ): Promise<schema.GifSearch> {
+    const existingSearch = await db.query.gifSearches.findFirst({
+      where: eq(schema.gifSearches.query, search.query), // Global query check
+    });
+
+    let searchEntry: schema.GifSearch;
+
+    if (existingSearch) {
+      const [updatedSearch] = await db
+        .update(schema.gifSearches)
+        .set({ searchCount: sql`${schema.gifSearches.searchCount} + 1` })
+        .where(eq(schema.gifSearches.id, existingSearch.id)) // Update the specific global entry
+        .returning();
+      searchEntry = updatedSearch;
+      // If we need to record that *this* user also searched this term,
+      // and gifSearches has a single entry per query string (global),
+      // then additional logic or a separate table would be needed if not just relying on userId on the global entry.
+      // For now, the global searchCount is incremented.
+    } else {
+      // search object (schema.InsertGifSearch) already contains userId.
+      const [newSearchEntry] = await db
+        .insert(schema.gifSearches)
+        .values(search) // search includes query, gifUrl, thumbnailUrl, provider, userId
+        .returning();
+      searchEntry = newSearchEntry;
     }
+    return searchEntry;
   }
-  
-  // User Settings methods
-  async getUserSettings(userId: number): Promise<UserSettings | undefined> {
-    return Array.from(this.userSettings.values()).find(
-      (settings) => settings.userId === userId,
-    );
+
+  async getGifSearchByQuery(query: string): Promise<schema.GifSearch | null> {
+    const result = await db.query.gifSearches.findFirst({
+      where: eq(schema.gifSearches.query, query), // Assumes query is globally unique-ish for this lookup
+    });
+    return result || null;
   }
-  
-  async createUserSettings(insertSettings: InsertUserSettings): Promise<UserSettings> {
-    const id = this.userSettingsId++;
-    const now = new Date();
-    const settings: UserSettings = { 
-      ...insertSettings,
-      id, 
-      createdAt: now, 
-      updatedAt: now,
-      defaultProvider: insertSettings.defaultProvider || "auto",
-      autoCheckUpdates: insertSettings.autoCheckUpdates !== undefined ? insertSettings.autoCheckUpdates : true,
-      gifDuration: insertSettings.gifDuration || 5,
-      gifQuality: insertSettings.gifQuality || "high",
-      saveHistory: insertSettings.saveHistory !== undefined ? insertSettings.saveHistory : true,
-      apiKeys: insertSettings.apiKeys || {}
-    };
-    this.userSettings.set(id, settings);
-    return settings;
+
+  async incrementSearchCount(searchId: number): Promise<schema.GifSearch | null> {
+    const [updatedSearch] = await db
+      .update(schema.gifSearches)
+      .set({ searchCount: sql`${schema.gifSearches.searchCount} + 1` })
+      .where(eq(schema.gifSearches.id, searchId))
+      .returning();
+    return updatedSearch || null;
   }
-  
-  async updateUserSettings(userId: number, updates: Partial<InsertUserSettings>): Promise<UserSettings | undefined> {
-    const settings = await this.getUserSettings(userId);
-    if (!settings) return undefined;
-    
-    const now = new Date();
-    const updatedSettings: UserSettings = { 
-      ...settings, 
-      ...updates, 
-      updatedAt: now 
-    };
-    
-    this.userSettings.set(settings.id, updatedSettings);
-    return updatedSettings;
+
+  async getUserSettings(userId: number): Promise<schema.UserSettings | null> {
+    // userSettings table in shared/schema.ts has its own 'id' PK and a 'userId' FK.
+    const result = await db.query.userSettings.findFirst({
+      where: eq(schema.userSettings.userId, userId),
+    });
+    return result || null;
+  }
+
+  // IStorage expects: settings: Omit<UserSetting, 'updatedAt'>
+  // UserSetting in shared/types.ts would have {id, userId, defaultProvider, ...}
+  // schema.InsertUserSettings is {userId, defaultProvider?, autoCheckUpdates?, ...}
+  // The PK of userSettings is 'id', not 'userId'.
+  async createUserSettings(settings: schema.InsertUserSettings): Promise<schema.UserSettings> {
+    const existingSettings = await this.getUserSettings(settings.userId);
+    if (existingSettings) {
+      return existingSettings;
+    }
+    const [newSettings] = await db
+      .insert(schema.userSettings)
+      .values(settings) // settings should include userId and other fields as per InsertUserSettings
+      .returning();
+    return newSettings;
+  }
+
+  // IStorage expects: settings: Partial<Omit<UserSetting, 'userId' | 'updatedAt'>>
+  // This means settings like { defaultProvider?: string, autoCheckUpdates?: boolean, ... }
+  async updateUserSettings(
+    userId: number, // Used to find the settings row
+    settings: Partial<Omit<schema.UserSettings, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>,
+  ): Promise<schema.UserSettings | null> {
+    const [updatedSettings] = await db
+      .update(schema.userSettings)
+      .set({ ...settings, updatedAt: new Date() }) // spread the updatable fields
+      .where(eq(schema.userSettings.userId, userId)) // find by userId
+      .returning();
+    return updatedSettings || null;
   }
 }
 
-export const storage = new MemStorage();
+export const storage: IStorage = new DrizzleStorage();

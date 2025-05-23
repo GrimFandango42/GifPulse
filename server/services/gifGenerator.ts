@@ -1,7 +1,7 @@
 import * as openai from "./openai";
 import * as google from "./google";
 import * as anthropic from "./anthropic";
-import { createGifFromImages } from "./gifCreator";
+import logger from '../lib/logger'; // Import pino logger
 
 // Type for AI provider
 type Provider = "auto" | "openai" | "google" | "anthropic";
@@ -22,14 +22,18 @@ export async function generateGif(
   animationFrames?: string[]; // Added for client-side animation
 }> {
   try {
-    console.log(`Generating GIF with prompt: "${prompt}" using provider: ${provider}`);
+    logger.info({ prompt, provider }, 'Generating GIF with prompt');
     
     // Choose the provider based on the input or auto-select
     if (provider === "auto") {
-      // For now, we'll prefer OpenAI as it has the best image quality
-      // In a production app, we could have logic to select the best provider based on the prompt
-      provider = "openai";
-      console.log(`Auto-selected provider: ${provider}`);
+      const defaultProviderFromEnv = process.env.DEFAULT_AI_PROVIDER;
+      if (defaultProviderFromEnv === 'openai' || defaultProviderFromEnv === 'google' || defaultProviderFromEnv === 'anthropic') {
+        provider = defaultProviderFromEnv;
+      } else {
+        // Default to OpenAI if env var is not set or invalid
+        provider = "openai"; 
+      }
+      logger.info({ provider }, 'Auto-selected provider (using DEFAULT_AI_PROVIDER or fallback)');
     }
     
     // Step 1: Generate animation frames based on the prompt
@@ -45,8 +49,8 @@ export async function generateGif(
           
           // Get variations as well
           variations = await openai.generateImageVariations(prompt, 3);
-        } catch (error) {
-          console.error("Error generating animation frames:", error);
+        } catch (error: any) {
+          logger.error({ err: error, prompt, provider: 'openai' }, 'Error generating OpenAI animation frames, attempting fallback');
           
           // Fallback: Just get a single image and use it as the GIF
           const singleImage = await openai.generateImage(prompt);
@@ -55,8 +59,8 @@ export async function generateGif(
           // Try to get variations
           try {
             variations = await openai.generateImageVariations(prompt, 3);
-          } catch (variationError) {
-            console.error("Error generating variations:", variationError);
+          } catch (variationError: any) {
+            logger.error({ err: variationError, prompt, provider: 'openai' }, 'Error generating OpenAI variations during fallback');
             variations = [singleImage];
           }
         }
@@ -83,33 +87,18 @@ export async function generateGif(
     // Step 2: Create animated GIF if we have multiple frames
     let gifUrl: string;
     
-    if (frameUrls.length > 1) {
-      // Create an actual animated GIF from the frames
-      try {
-        gifUrl = await createGifFromImages(frameUrls, {
-          width: 512,
-          height: 512,
-          delay: 200, // 200ms between frames (5 FPS)
-          quality: 10,
-          repeat: 0 // Loop forever
-        });
-        console.log("Successfully created animated GIF from frames");
-      } catch (gifError) {
-        console.error("Error creating animated GIF:", gifError);
-        // Fallback to just using the first frame
-        gifUrl = frameUrls[0];
-      }
-    } else if (frameUrls.length === 1) {
-      // Just use the single frame
+    // If frames were generated, use the first frame as the primary GIF URL.
+    // The client will use `animationFrames` to create an animation if multiple frames exist.
+    if (frameUrls.length > 0) {
       gifUrl = frameUrls[0];
     } else {
       throw new Error("No images were generated for the GIF");
     }
     
     // Use the first frame as the thumbnail
-    const thumbnailUrl = frameUrls[0];
+    const thumbnailUrl = frameUrls[0]; // This is safe due to the check above
     
-    console.log(`Generated GIF for prompt: "${prompt}"`);
+    logger.info({ prompt, gifUrl, thumbnailUrl, variationCount: variations.length, frameCount: frameUrls.length }, 'Generated GIF details');
     
     return {
       gifUrl,
@@ -117,9 +106,9 @@ export async function generateGif(
       variations,
       animationFrames: frameUrls.length > 1 ? frameUrls : undefined
     };
-  } catch (error) {
-    console.error("Error generating GIF:", error);
-    throw new Error(`GIF generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, provider }, 'Error generating GIF');
+    throw new Error(`GIF generation failed: ${error.message || error}`);
   }
 }
 
@@ -136,6 +125,7 @@ export async function checkForProviderUpdates(): Promise<{
   }[];
 }> {
   try {
+    logger.info('Checking for AI provider updates (mock implementation)');
     // In a real implementation, this would check with the providers' APIs
     // For this demo, we'll return mock data
     return {
@@ -158,8 +148,8 @@ export async function checkForProviderUpdates(): Promise<{
         }
       ]
     };
-  } catch (error) {
-    console.error("Error checking for provider updates:", error);
-    throw new Error(`Provider update check failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error }, 'Error checking for provider updates');
+    throw new Error(`Provider update check failed: ${error.message || error}`);
   }
 }

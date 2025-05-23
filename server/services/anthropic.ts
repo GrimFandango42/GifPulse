@@ -2,6 +2,7 @@
  * Anthropic Claude integration for image generation
  * In a real implementation, this would use Anthropic's API
  */
+import logger from '../lib/logger'; // Import pino logger
 
 /**
  * Generate an image using Anthropic Claude
@@ -10,7 +11,7 @@
  */
 export async function generateImage(prompt: string): Promise<string> {
   try {
-    console.log(`Generating image with Anthropic Claude: ${prompt}`);
+    logger.info({ prompt, provider: 'anthropic' }, 'Generating image with Anthropic Claude');
     
     // In a real implementation, this would call the Anthropic Claude API
     // For this demo, we'll return a placeholder GIF URL
@@ -50,9 +51,9 @@ export async function generateImage(prompt: string): Promise<string> {
     ];
     
     return defaultGifs[Math.floor(Math.random() * defaultGifs.length)];
-  } catch (error) {
-    console.error("Error generating image with Anthropic Claude:", error);
-    throw new Error(`Anthropic Claude image generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, provider: 'anthropic' }, 'Error generating image with Anthropic Claude');
+    throw new Error(`Anthropic Claude image generation failed: ${error.message || error}`);
   }
 }
 
@@ -67,7 +68,7 @@ export async function generateImageVariations(
   count: number = 3
 ): Promise<string[]> {
   try {
-    console.log(`Generating ${count} image variations with Anthropic Claude: ${prompt}`);
+    logger.info({ prompt, count, provider: 'anthropic' }, `Generating ${count} image variations with Anthropic Claude`);
     
     // In a real implementation, this would generate variations using Anthropic's API
     // For this demo, we'll return placeholder variation URLs
@@ -90,8 +91,8 @@ export async function generateImageVariations(
     }
     
     return variations;
-  } catch (error) {
-    console.error("Error generating image variations with Anthropic Claude:", error);
-    throw new Error(`Anthropic Claude image variations generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, count, provider: 'anthropic' }, 'Error generating image variations with Anthropic Claude');
+    throw new Error(`Anthropic Claude image variations generation failed: ${error.message || error}`);
   }
 }

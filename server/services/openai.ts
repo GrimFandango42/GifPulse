@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import GiphyApi from "giphy-api";
+import logger from '../lib/logger'; // Import pino logger
 
 // Initialize OpenAI client
 const openai = new OpenAI({ 
@@ -16,20 +17,22 @@ const giphy = GiphyApi();
  */
 export async function generateImage(prompt: string): Promise<string> {
   try {
-    console.log(`Generating image with OpenAI DALL-E: ${prompt}`);
+    logger.info({ prompt, provider: 'openai' }, 'Generating image with OpenAI DALL-E');
     
     // the newest OpenAI model is "gpt-4o" which was released May 13, 2024. do not change this unless explicitly requested by the user
     
     // Enhance the prompt to make it more dynamic and GIF-appropriate
     const enhancedPrompt = `Create a dynamic, animated-style image representing: ${prompt}. Make it expressive, vibrant, and suitable for a short GIF.`;
     
+    const imageModel = process.env.OPENAI_IMAGE_MODEL || "dall-e-3";
+    
     try {
       // Call OpenAI's DALL-E 3 API to generate the image
       const response = await openai.images.generate({
-        model: "dall-e-3",
+        model: imageModel,
         prompt: enhancedPrompt,
         n: 1,
-        size: "1024x1024",
+        size: "1024x1024", // TODO: Consider externalizing if needed
         quality: "standard",
         style: "vivid", // Using vivid style for more expressive images
       });
@@ -40,11 +43,11 @@ export async function generateImage(prompt: string): Promise<string> {
       } else {
         throw new Error('OpenAI API returned an empty response');
       }
-    } catch (apiError) {
-      console.error("OpenAI API error:", apiError);
+    } catch (apiError: any) {
+      logger.error({ err: apiError, prompt, provider: 'openai' }, 'OpenAI API error during image generation');
       
       // If OpenAI API fails, fall back to Giphy search as backup
-      console.log("Falling back to Giphy search...");
+      logger.info({ prompt, provider: 'openai' }, 'Falling back to Giphy search for single image');
       
       const giphyResponse = await giphy.search({
         q: prompt,
@@ -59,9 +62,9 @@ export async function generateImage(prompt: string): Promise<string> {
       // If Giphy also fails, throw the original error
       throw apiError;
     }
-  } catch (error) {
-    console.error("Error generating image with OpenAI DALL-E:", error);
-    throw new Error(`OpenAI DALL-E image generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, provider: 'openai' }, 'Error generating image with OpenAI DALL-E (outer catch)');
+    throw new Error(`OpenAI DALL-E image generation failed: ${error.message || error}`);
   }
 }
 
@@ -76,7 +79,7 @@ export async function generateAnimationFrames(
   frameCount: number = 5
 ): Promise<string[]> {
   try {
-    console.log(`Generating ${frameCount} animation frames with OpenAI DALL-E for: ${basePrompt}`);
+    logger.info({ basePrompt, frameCount, provider: 'openai' }, `Generating ${frameCount} animation frames with OpenAI DALL-E`);
     
     // Generate animation-specific prompts
     const animationPrompts = [];
@@ -90,9 +93,10 @@ Give me a detailed sequence of prompts where each frame subtly changes to show m
 Keep the same character/subject and style through all frames to ensure animation coherence.
 Format as JSON array of strings with no additional text.
 `;
+    const chatModel = process.env.OPENAI_CHAT_MODEL || "gpt-4o";
 
     const gptResponse = await openai.chat.completions.create({
-      model: "gpt-4o", // the newest OpenAI model is "gpt-4o" which was released May 13, 2024
+      model: chatModel, // Use environment variable or default
       messages: [{ role: "user", content: frameSuggestionPrompt }],
       response_format: { type: "json_object" }
     });
@@ -106,21 +110,21 @@ Format as JSON array of strings with no additional text.
           for (let i = 0; i < frameCount; i++) {
             animationPrompts.push(parsedResponse.frames[i]);
           }
-          console.log("Using AI-generated animation sequence");
+          logger.info({ basePrompt, provider: 'openai' }, 'Using AI-generated animation sequence from GPT-4o');
         }
-      } catch (parseError) {
-        console.error("Failed to parse animation sequence from GPT:", parseError);
+      } catch (parseError: any) {
+        logger.warn({ err: parseError, basePrompt, provider: 'openai' }, 'Failed to parse animation sequence from GPT-4o');
         // Will fall back to default sequence below
       }
     }
-  } catch (gptError) {
-    console.error("Error getting animation sequence from GPT:", gptError);
+  } catch (gptError: any) {
+    logger.warn({ err: gptError, basePrompt, provider: 'openai' }, 'Error getting animation sequence from GPT-4o');
     // Will fall back to default sequence below
   }
   
   // If we don't have enough prompts yet, use fallback method
   if (animationPrompts.length < frameCount) {
-    console.log("Using fallback animation sequence generation");
+    logger.info({ basePrompt, provider: 'openai' }, 'Using fallback animation sequence generation');
     // Define motion descriptors for different frames - more detailed for better animation
     const motionDescriptors = [
       "initial pose, about to start movement of", 
@@ -152,11 +156,12 @@ ${framePrompt}
 EXTREMELY IMPORTANT: Create a simple, clean animation frame with consistent character design, position, size, and colors across all frames. Use a simple, clean art style. Maintain EXACT same background and character proportions as other frames. This is one frame in a sequence for animation.
 `;
         
+        const imageModelForFrames = process.env.OPENAI_IMAGE_MODEL || "dall-e-3";
         const response = await openai.images.generate({
-          model: "dall-e-3",
+          model: imageModelForFrames,
           prompt: enhancedPrompt,
           n: 1,
-          size: "1024x1024",
+          size: "1024x1024", // TODO: Consider externalizing
           quality: "standard",
           style: "vivid",
         });
@@ -166,12 +171,13 @@ EXTREMELY IMPORTANT: Create a simple, clean animation frame with consistent char
         }
         
         throw new Error('OpenAI API returned an empty response for frame');
-      } catch (frameError) {
-        console.error("Error generating animation frame:", frameError);
+      } catch (frameError: any) {
+        logger.error({ err: frameError, framePrompt, provider: 'openai' }, 'Error generating a specific animation frame');
         
         // If a frame fails, return a placeholder or fallback
         // For consistency in animation, we'll use Giphy as fallback
         try {
+          logger.info({ basePrompt, provider: 'openai' }, 'Falling back to Giphy for a failed animation frame');
           const giphyResponse = await giphy.search({
             q: basePrompt,
             limit: 1,
@@ -181,22 +187,22 @@ EXTREMELY IMPORTANT: Create a simple, clean animation frame with consistent char
           if (giphyResponse.data && giphyResponse.data.length > 0) {
             return giphyResponse.data[0].images.original.url;
           }
-        } catch (giphyError) {
-          console.error("Giphy fallback also failed:", giphyError);
+        } catch (giphyError: any) {
+          logger.error({ err: giphyError, basePrompt, provider: 'openai' }, 'Giphy fallback also failed for animation frame');
         }
         
-        throw frameError;
+        throw frameError; // Re-throw original frame error if Giphy fails
       }
     });
     
     // Wait for all frames to be generated
     const frameUrls = await Promise.all(framePromises);
-    console.log(`Successfully generated ${frameUrls.length} animation frames`);
+    logger.info({ basePrompt, generatedFrameCount: frameUrls.length, provider: 'openai' }, `Successfully generated animation frames`);
     
     return frameUrls;
-  } catch (error) {
-    console.error("Error generating animation frames:", error);
-    throw new Error(`Animation frame generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, basePrompt, provider: 'openai' }, 'Error generating animation frames (outer catch)');
+    throw new Error(`Animation frame generation failed: ${error.message || error}`);
   }
 }
 
@@ -211,7 +217,7 @@ export async function generateImageVariations(
   count: number = 3
 ): Promise<string[]> {
   try {
-    console.log(`Generating ${count} image variations with OpenAI DALL-E: ${prompt}`);
+    logger.info({ prompt, count, provider: 'openai' }, `Generating ${count} image variations with OpenAI DALL-E`);
     
     // Generate variations by adding style modifiers to the original prompt
     const styleModifiers = [
@@ -238,11 +244,12 @@ export async function generateImageVariations(
         const enhancedPrompt = `Create a dynamic, animated-style image representing: ${prompt} ${modifier}. Make it expressive and vibrant.`;
         
         try {
+          const imageModelForVariations = process.env.OPENAI_IMAGE_MODEL || "dall-e-3";
           const response = await openai.images.generate({
-            model: "dall-e-3",
+            model: imageModelForVariations,
             prompt: enhancedPrompt,
             n: 1,
-            size: "1024x1024",
+            size: "1024x1024", // TODO: Consider externalizing
             quality: "standard",
             style: "vivid",
           });
@@ -250,8 +257,8 @@ export async function generateImageVariations(
           if (response.data && response.data.length > 0 && response.data[0].url) {
             return response.data[0].url;
           }
-        } catch (err) {
-          console.error(`Error generating variation with modifier '${modifier}':`, err);
+        } catch (err: any) {
+          logger.warn({ err, prompt, modifier, provider: 'openai' }, `Error generating variation with modifier '${modifier}'`);
           return null;
         }
       });
@@ -263,12 +270,13 @@ export async function generateImageVariations(
       if (validVariations.length > 0) {
         return validVariations;
       }
-    } catch (apiError) {
-      console.error("Error generating variations with OpenAI API:", apiError);
+    } catch (apiError: any) {
+      logger.error({ err: apiError, prompt, provider: 'openai' }, 'Error generating variations with OpenAI API');
     }
     
     // Fallback to Giphy if OpenAI API fails
     try {
+      logger.info({ prompt, provider: 'openai' }, 'Falling back to Giphy for variations');
       const giphyResponse = await giphy.search({
         q: prompt,
         limit: count,
@@ -278,11 +286,12 @@ export async function generateImageVariations(
       if (giphyResponse.data && giphyResponse.data.length > 0) {
         return giphyResponse.data.map(gif => gif.images.original.url);
       }
-    } catch (giphyError) {
-      console.error("Giphy fallback also failed:", giphyError);
+    } catch (giphyError: any) {
+      logger.error({ err: giphyError, prompt, provider: 'openai' }, 'Giphy fallback also failed for variations');
     }
     
     // Final fallback to static variation GIFs if all else fails
+    logger.warn({ prompt, provider: 'openai' }, 'All variation generation methods failed, returning static fallback GIFs');
     const fallbackGifs = [
       "https://media2.giphy.com/media/VbnUQpnihPSIgIXuZv/giphy.gif",
       "https://media4.giphy.com/media/9DinPR8bzFsmf74j9W/giphy.gif",
@@ -291,8 +300,8 @@ export async function generateImageVariations(
     ];
     
     return fallbackGifs.slice(0, count);
-  } catch (error) {
-    console.error("Error generating image variations with OpenAI DALL-E:", error);
-    throw new Error(`OpenAI DALL-E image variations generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, provider: 'openai' }, 'Error generating image variations with OpenAI DALL-E (outer catch)');
+    throw new Error(`OpenAI DALL-E image variations generation failed: ${error.message || error}`);
   }
 }
