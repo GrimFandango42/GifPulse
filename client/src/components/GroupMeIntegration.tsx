@@ -6,6 +6,7 @@ interface GroupMeIntegrationProps {
   onGifButtonClick: () => void;
   selectedGif: string | null;
   onGifSent?: () => void;
+  isAuthenticated: boolean; // Added isAuthenticated prop
 }
 
 interface ChatMessage {
@@ -22,7 +23,8 @@ interface ChatMessage {
 export default function GroupMeIntegration({ 
   onGifButtonClick, 
   selectedGif,
-  onGifSent
+  onGifSent,
+  isAuthenticated // Destructure isAuthenticated
 }: GroupMeIntegrationProps) {
   const [message, setMessage] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -147,26 +149,29 @@ export default function GroupMeIntegration({
             onClick={onGifButtonClick}
             className="material-ripple p-2 rounded-full flex items-center justify-center bg-neutral-light hover:bg-neutral-200 transition-colors"
             aria-label="Add GIF"
+            disabled={!isAuthenticated} // Disable if not authenticated
           >
-            <span className="material-icons text-primary font-bold">gif</span>
-            <span className="ml-1 text-sm font-medium text-primary">GIF</span>
+            <span className={`material-icons font-bold ${isAuthenticated ? 'text-primary' : 'text-gray-400'}`}>gif</span>
+            <span className={`ml-1 text-sm font-medium ${isAuthenticated ? 'text-primary' : 'text-gray-400'}`}>GIF</span>
           </button>
           <div className="flex-1 mx-2 bg-neutral-light rounded-full px-4 py-2">
             <Input
               type="text"
-              placeholder="Message"
+              placeholder={isAuthenticated ? "Message" : "Login to send messages"}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={handleKeyDown}
               className="w-full bg-transparent outline-none text-neutral-dark placeholder-neutral-medium text-sm border-none"
+              disabled={!isAuthenticated} // Disable if not authenticated
             />
           </div>
           <Button
             onClick={handleSendMessage}
             variant="ghost"
             className="material-ripple p-2 rounded-full"
+            disabled={!isAuthenticated} // Disable if not authenticated
           >
-            <span className="material-icons text-primary">send</span>
+            <span className={`material-icons ${isAuthenticated ? 'text-primary' : 'text-gray-400'}`}>send</span>
           </Button>
         </div>
       </div>

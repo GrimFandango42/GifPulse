@@ -2,6 +2,7 @@
  * Google Imagen integration for image generation
  * In a real implementation, this would use Google's Imagen API
  */
+import logger from '../lib/logger'; // Import pino logger
 
 /**
  * Generate an image using Google Imagen
@@ -10,7 +11,7 @@
  */
 export async function generateImage(prompt: string): Promise<string> {
   try {
-    console.log(`Generating image with Google Imagen: ${prompt}`);
+    logger.info({ prompt, provider: 'google' }, 'Generating image with Google Imagen');
     
     // In a real implementation, this would call the Google Imagen API
     // For this demo, we'll return a placeholder GIF URL
@@ -50,9 +51,9 @@ export async function generateImage(prompt: string): Promise<string> {
     ];
     
     return defaultGifs[Math.floor(Math.random() * defaultGifs.length)];
-  } catch (error) {
-    console.error("Error generating image with Google Imagen:", error);
-    throw new Error(`Google Imagen image generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, provider: 'google' }, 'Error generating image with Google Imagen');
+    throw new Error(`Google Imagen image generation failed: ${error.message || error}`);
   }
 }
 
@@ -67,7 +68,7 @@ export async function generateImageVariations(
   count: number = 3
 ): Promise<string[]> {
   try {
-    console.log(`Generating ${count} image variations with Google Imagen: ${prompt}`);
+    logger.info({ prompt, count, provider: 'google' }, `Generating ${count} image variations with Google Imagen`);
     
     // In a real implementation, this would generate variations using Google's API
     // For this demo, we'll return placeholder variation URLs
@@ -90,8 +91,8 @@ export async function generateImageVariations(
     }
     
     return variations;
-  } catch (error) {
-    console.error("Error generating image variations with Google Imagen:", error);
-    throw new Error(`Google Imagen image variations generation failed: ${error}`);
+  } catch (error: any) {
+    logger.error({ err: error, prompt, count, provider: 'google' }, 'Error generating image variations with Google Imagen');
+    throw new Error(`Google Imagen image variations generation failed: ${error.message || error}`);
   }
 }
